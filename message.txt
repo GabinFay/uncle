@@ -1,0 +1,55 @@
+The Problem: Financial Apartheid in Brazil
+65+ million Brazilians are permanently blacklisted from the financial system. Once you miss payments, you're banned from:
+
+- Opening bank accounts
+- Getting credit cards
+- Starting businesses
+- Building wealth
+
+It's financial apartheid. Traditional systems offer no path back.
+
+Our Solution: Decentralized Credit Recovery
+A protocol that lets blacklisted people rebuild creditworthiness through:
+
+- Social vouching (friends stake tokens instead of traditional collateral)
+- Alternative data (employment proofs via email, utility payments)
+- Micro-loan graduation (start with $50, build up to $5000+)
+- Cross-chain reputation (portable credit history globally)
+
+This literally couldn't exist without crypto. No traditional institution has incentive to serve this market.
+
+Multiple Bounty Targets ($40K+ potential)
+Why This Wins Big
+
+- World Mini App ($10K) - Financial inclusion is their core mission
+- Flow Killer App ($6K) - Perfect consumer finance showcase
+- vlayer Most Inspiring ($4K) - Revolutionary alternative data use
+- Hedera AI ($3.5K) - AI credit risk assessment
+- Filecoin ($5K) - User data sovereignty
+- LayerZero ($2K) - Cross-chain reputation
++ 4 more bounties we can easily qualify for if we want
+
+Judge Appeal
+
+- Massive social impact (65M+ people served)
+- Technical innovation (novel use of crypto primitives)
+- Real user testimonials (we'll find actual blacklisted people to demo)
+- Global scalability (same problem exists worldwide)
+
+
+What We're Building
+Tech Stack
+
+- Smart Contracts: Solidity (lending pools, reputation, social vouching)
+- Frontend: React/Next.js mobile-first app
+- Identity: World ID integration (sybil resistance)
+- Data: vlayer proofs (employment, payments verification)
+- AI: Hedera agents (credit risk assessment)
+- Cross-chain: LayerZero (portable reputation)
+
+Core Features
+
+- Social Vouching System - Friends stake tokens to vouch for character
+- Alternative Credit Scoring - AI analyzes employment, utility payments, social proof
+- Graduated Micro-Lending - Start small ($50), build trust, access larger amounts
+- Cross-Chain Reputation - Credit history works globally, can't be corrupted
