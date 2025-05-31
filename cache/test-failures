@@ -1,1 +1,1 @@
-test_ApplyForLoan_LTV_Success
+test_FullLoanCycle_WithCollateral_NoVouching|test_FullLoanCycle_WithSocialVouching
