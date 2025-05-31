@@ -3,14 +3,16 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "./UserRegistry.sol"; // Assumes UserRegistry.sol is in the same directory
 
 /**
  * @title SocialVouching
  * @dev Manages social vouching mechanism where users stake tokens for others.
  */
-contract SocialVouching is ReentrancyGuard {
+contract SocialVouching is ReentrancyGuard, Ownable {
     UserRegistry public userRegistry;
+    address public loanContractAddress;
 
     struct Vouch {
         address voucher;
@@ -34,7 +36,12 @@ contract SocialVouching is ReentrancyGuard {
         _;
     }
 
-    constructor(address userRegistryAddress) {
+    modifier onlyLoanContract() {
+        require(msg.sender == loanContractAddress, "SocialVouching: Caller is not the LoanContract");
+        _;
+    }
+
+    constructor(address userRegistryAddress) Ownable(msg.sender) {
         require(userRegistryAddress != address(0), "SocialVouching: Invalid UserRegistry address");
         userRegistry = UserRegistry(userRegistryAddress);
     }
@@ -103,8 +110,11 @@ contract SocialVouching is ReentrancyGuard {
      * @param amountToSlash The amount to slash from the voucher's stake.
      * @param recipient The address to send the slashed funds to (e.g., treasury or affected lender).
      */
-    function slashVouch(address borrower, address voucher, uint256 amountToSlash, address recipient) external nonReentrant { // Consider adding onlyLoanContract modifier
-        // require(msg.sender == loanContractAddress, "SocialVouching: Only LoanContract can slash");
+    function slashVouch(address borrower, address voucher, uint256 amountToSlash, address recipient) 
+        external 
+        nonReentrant 
+        onlyLoanContract
+    {
         Vouch storage vouchDetails = vouches[borrower][voucher];
         require(vouchDetails.active, "SocialVouching: No active vouch to slash");
         require(amountToSlash <= vouchDetails.amountStaked, "SocialVouching: Slash amount exceeds staked amount");
@@ -125,8 +135,11 @@ contract SocialVouching is ReentrancyGuard {
      * @dev Placeholder for rewarding a voucher. Logic to be defined based on platform tokenomics.
      * Only callable by a trusted contract (e.g., LoanContract or Treasury).
      */
-    function rewardVoucher(address borrower, address voucher, uint256 rewardAmount, address rewardToken) external nonReentrant { // Consider adding onlyPlatformManaged modifier
-        // require(msg.sender == trustedContractAddress, "SocialVouching: Caller not authorized");
+    function rewardVoucher(address borrower, address voucher, uint256 rewardAmount, address rewardToken) 
+        external 
+        nonReentrant 
+        onlyLoanContract
+    {
         Vouch storage vouchDetails = vouches[borrower][voucher];
         require(vouchDetails.active || vouchDetails.amountStaked == 0, "SocialVouching: Vouch must have been active or successfully completed"); // Allow reward after successful completion
         // Transfer rewardToken from treasury/reward pool to voucher
@@ -140,5 +153,11 @@ contract SocialVouching is ReentrancyGuard {
 
     function getTotalVouchedAmountForBorrower(address borrower) external view returns (uint256) {
         return totalVouchedAmount[borrower]; // This is a simplified sum; real value might need oracle price feeds
+    }
+
+    function setLoanContractAddress(address _loanContractAddress) external onlyOwner {
+        require(_loanContractAddress != address(0), "SocialVouching: Invalid LoanContract address");
+        loanContractAddress = _loanContractAddress;
+        // Emit an event if desired
     }
 } 
