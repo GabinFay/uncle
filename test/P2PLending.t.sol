@@ -41,11 +41,14 @@ contract P2PLendingTest is Test {
 
     event LoanOfferCreated(bytes32 indexed offerId, address indexed lender, uint256 amount, address token, uint256 interestRate, uint256 duration);
     event LoanRequestCreated(bytes32 indexed requestId, address indexed borrower, uint256 amount, address token, uint256 proposedInterestRate, uint256 proposedDuration);
-    event LoanAgreementFormed(bytes32 indexed agreementId, address indexed lender, address indexed borrower, uint256 amount, address token);
+    event LoanAgreementCreated(bytes32 indexed agreementId, address indexed lender, address indexed borrower, uint256 amount, address token, uint256 interestRate, uint256 duration, uint256 startTime, uint256 dueDate);
     event LoanRepaymentMade(bytes32 indexed agreementId, uint256 amountPaid, uint256 totalPaid);
     event LoanAgreementRepaid(bytes32 indexed agreementId);
     event LoanAgreementDefaulted(bytes32 indexed agreementId);
     event VouchSlashed(address indexed voucher, address indexed borrower, uint256 amount, address indexed lender);
+
+    event PaymentModificationRequested(bytes32 indexed agreementId, address indexed borrower, P2PLending.PaymentModificationType modificationType, uint256 value);
+    event PaymentModificationResponded(bytes32 indexed agreementId, address indexed lender, bool approved, P2PLending.PaymentModificationType modificationType, uint256 originalRequestedValue);
 
     event ReputationUpdated(address indexed user, int256 newScore, string reason);
 
@@ -132,11 +135,30 @@ contract P2PLendingTest is Test {
         vm.stopPrank();
         uint256 lenderBalanceBefore = mockDai.balanceOf(lender);
         uint256 borrowerBalanceBefore = mockDai.balanceOf(borrower);
+
+        // Get offer details to predict event parameters
+        P2PLending.LoanOffer memory offerDetails = p2pLending.getLoanOfferDetails(offerId);
+        uint256 expectedStartTime = 1; // We will warp to this timestamp
+        uint256 expectedDueDate = expectedStartTime + offerDetails.duration;
+
         vm.startPrank(borrower);
-        vm.expectEmit(false, true, true, true, address(p2pLending));
-        emit LoanAgreementFormed(bytes32(0), lender, borrower, 100 * 1e18, address(mockDai));
+        vm.warp(expectedStartTime); // Warp time to make block.timestamp predictable
+
+        vm.expectEmit(false, true, true, true, address(p2pLending)); 
+        emit LoanAgreementCreated({
+            agreementId: bytes32(0), 
+            lender: lender,
+            borrower: borrower,
+            amount: offerDetails.offerAmount, // Use offerDetails for consistency
+            token: offerDetails.loanToken,
+            interestRate: offerDetails.interestRate,
+            duration: offerDetails.duration,
+            startTime: expectedStartTime,
+            dueDate: expectedDueDate
+        });
         bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
         vm.stopPrank();
+
         assertTrue(agreementId != bytes32(0));
         assertEq(mockDai.balanceOf(lender), lenderBalanceBefore - (100 * 1e18));
         assertEq(mockDai.balanceOf(borrower), borrowerBalanceBefore + (100 * 1e18));
@@ -478,5 +500,225 @@ contract P2PLendingTest is Test {
         vm.warp(block.timestamp + 8 days);
         vm.expectRevert(bytes("Loan not active for default"));
         p2pLending.handleP2PDefault(agreementId);
+    }
+
+    // --- Tests for Loan Modifications ---
+
+    function test_RequestAndApproveDueDateExtension() public {
+        // 1. Setup Loan
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(100e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 * ONE_DAY_SECONDS, 0, address(0));
+        mockDai.approve(address(p2pLending), 100e18);
+        vm.stopPrank();
+        vm.startPrank(borrower);
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementBefore = p2pLending.getLoanAgreementDetails(agreementId);
+        uint256 originalDueDate = agreementBefore.dueDate;
+        uint256 newProposedDueDate = originalDueDate + (3 * ONE_DAY_SECONDS);
+
+        // 2. Borrower requests DueDateExtension
+        vm.startPrank(borrower);
+        vm.expectEmit(true, true, false, false, address(p2pLending)); // agreementId, borrower
+        emit PaymentModificationRequested(agreementId, borrower, P2PLending.PaymentModificationType.DueDateExtension, newProposedDueDate);
+        p2pLending.requestPaymentModification(agreementId, P2PLending.PaymentModificationType.DueDateExtension, newProposedDueDate);
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementAfterRequest = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(uint(agreementAfterRequest.status), uint(P2PLending.LoanStatus.PendingModificationApproval));
+        assertEq(uint(agreementAfterRequest.requestedModificationType), uint(P2PLending.PaymentModificationType.DueDateExtension));
+        assertEq(agreementAfterRequest.requestedModificationValue, newProposedDueDate);
+        assertFalse(agreementAfterRequest.modificationApprovedByLender);
+
+        // 3. Lender approves DueDateExtension
+        vm.startPrank(lender);
+        vm.expectEmit(true, true, false, false, address(p2pLending)); // agreementId, lender
+        emit PaymentModificationResponded(agreementId, lender, true, P2PLending.PaymentModificationType.DueDateExtension, newProposedDueDate);
+        p2pLending.respondToPaymentModification(agreementId, true);
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementAfterApproval = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(uint(agreementAfterApproval.status), uint(P2PLending.LoanStatus.Active)); // Should be active as new due date is in future
+        assertTrue(agreementAfterApproval.modificationApprovedByLender);
+        assertEq(agreementAfterApproval.dueDate, newProposedDueDate);
+    }
+
+    function test_RequestAndApprovePartialPaymentAgreement() public {
+        // 1. Setup Loan
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(100e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 * ONE_DAY_SECONDS, 0, address(0));
+        mockDai.approve(address(p2pLending), 100e18);
+        vm.stopPrank();
+        vm.startPrank(borrower);
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
+        vm.stopPrank();
+
+        uint256 proposedPartialAmount = 50e18;
+
+        // 2. Borrower requests PartialPaymentAgreement
+        vm.startPrank(borrower);
+        vm.expectEmit(true, true, false, false, address(p2pLending));
+        emit PaymentModificationRequested(agreementId, borrower, P2PLending.PaymentModificationType.PartialPaymentAgreement, proposedPartialAmount);
+        p2pLending.requestPaymentModification(agreementId, P2PLending.PaymentModificationType.PartialPaymentAgreement, proposedPartialAmount);
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementAfterRequest = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(uint(agreementAfterRequest.status), uint(P2PLending.LoanStatus.PendingModificationApproval));
+        assertEq(uint(agreementAfterRequest.requestedModificationType), uint(P2PLending.PaymentModificationType.PartialPaymentAgreement));
+        assertEq(agreementAfterRequest.requestedModificationValue, proposedPartialAmount);
+
+        // 3. Lender approves PartialPaymentAgreement
+        vm.startPrank(lender);
+        vm.expectEmit(true, true, false, false, address(p2pLending));
+        emit PaymentModificationResponded(agreementId, lender, true, P2PLending.PaymentModificationType.PartialPaymentAgreement, proposedPartialAmount);
+        p2pLending.respondToPaymentModification(agreementId, true);
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementAfterApproval = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(uint(agreementAfterApproval.status), uint(P2PLending.LoanStatus.Active_PartialPaymentAgreed));
+        assertTrue(agreementAfterApproval.modificationApprovedByLender);
+        // Due date and amountPaid should not change here, only status and agreed value
+        assertEq(agreementAfterApproval.requestedModificationValue, proposedPartialAmount);
+    }
+
+    function test_RequestAndRejectModification() public {
+        // 1. Setup Loan
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(100e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 * ONE_DAY_SECONDS, 0, address(0));
+        mockDai.approve(address(p2pLending), 100e18);
+        vm.stopPrank();
+        vm.startPrank(borrower);
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementBefore = p2pLending.getLoanAgreementDetails(agreementId);
+        uint256 originalDueDate = agreementBefore.dueDate;
+        uint256 newProposedDueDate = originalDueDate + (3 * ONE_DAY_SECONDS);
+
+        // 2. Borrower requests DueDateExtension
+        vm.startPrank(borrower);
+        p2pLending.requestPaymentModification(agreementId, P2PLending.PaymentModificationType.DueDateExtension, newProposedDueDate);
+        vm.stopPrank();
+
+        // 3. Lender rejects DueDateExtension
+        vm.startPrank(lender);
+        vm.expectEmit(true, true, false, false, address(p2pLending));
+        emit PaymentModificationResponded(agreementId, lender, false, P2PLending.PaymentModificationType.DueDateExtension, newProposedDueDate);
+        p2pLending.respondToPaymentModification(agreementId, false);
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementAfterRejection = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(uint(agreementAfterRejection.status), uint(P2PLending.LoanStatus.Active)); // Should revert to Active (or Overdue if time passed)
+        assertFalse(agreementAfterRejection.modificationApprovedByLender);
+        assertEq(agreementAfterRejection.dueDate, originalDueDate); // Due date should not change
+    }
+
+    function test_RevertIf_RequestModification_NotBorrower() public {
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(100e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 * ONE_DAY_SECONDS, 0, address(0));
+        mockDai.approve(address(p2pLending), 100e18);
+        vm.stopPrank();
+        vm.startPrank(borrower);
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
+        vm.stopPrank();
+
+        vm.startPrank(lender); // Attacker (lender)
+        vm.expectRevert(bytes("P2PL: Not borrower"));
+        p2pLending.requestPaymentModification(agreementId, P2PLending.PaymentModificationType.DueDateExtension, block.timestamp + 10 days);
+        vm.stopPrank();
+    }
+
+    function test_RevertIf_RequestModification_LoanNotActiveOrOverdue_InvalidId() public {
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(100e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 * ONE_DAY_SECONDS, 0, address(0));
+        vm.stopPrank(); // Lender created an offer, but no agreement formed with borrower yet.
+
+        bytes32 nonExistentAgreementId = keccak256(abi.encodePacked("non-existent-agreement"));
+
+        vm.startPrank(borrower); // Borrower attempts to modify.
+        // Scenario 1: Try with a completely non-existent ID
+        vm.expectRevert(bytes("P2PL: Not borrower")); // Because agreement.borrower will be address(0)
+        p2pLending.requestPaymentModification(nonExistentAgreementId, P2PLending.PaymentModificationType.DueDateExtension, block.timestamp + 10 days);
+
+        // Scenario 2: Try with an offerId (which is not an agreementId)
+        vm.expectRevert(bytes("P2PL: Not borrower")); // Because agreement.borrower will be address(0) for an offerId
+        p2pLending.requestPaymentModification(offerId, P2PLending.PaymentModificationType.DueDateExtension, block.timestamp + 10 days);
+        vm.stopPrank();
+    }
+    
+    function test_RevertIf_RequestModification_OnRepaidLoan() public {
+        // Setup: Lender creates offer, Borrower accepts, Borrower repays
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(50e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 1 * ONE_DAY_SECONDS, 0, address(0));
+        mockDai.approve(address(p2pLending), 50e18);
+        vm.stopPrank();
+
+        vm.startPrank(borrower);
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
+        P2PLending.LoanAgreement memory agreement = p2pLending.getLoanAgreementDetails(agreementId);
+        uint256 totalDue = (agreement.principalAmount * (BASIS_POINTS_TEST + agreement.interestRate)) / BASIS_POINTS_TEST;
+        mockDai.approve(address(p2pLending), totalDue);
+        p2pLending.repayP2PLoan(agreementId, totalDue); // Loan is now Repaid
+
+        // Test: Borrower attempts to modify the Repaid loan
+        vm.expectRevert(bytes("P2PL: Loan not active/overdue"));
+        p2pLending.requestPaymentModification(agreementId, P2PLending.PaymentModificationType.DueDateExtension, block.timestamp + 10 days);
+        vm.stopPrank();
+    }
+
+    function test_RevertIf_RequestModification_InvalidValue() public {
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(100e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 * ONE_DAY_SECONDS, 0, address(0));
+        mockDai.approve(address(p2pLending), 100e18);
+        vm.stopPrank();
+        vm.startPrank(borrower);
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
+        vm.stopPrank();
+
+        vm.startPrank(borrower);
+        // Scenario 1: Modification value is 0
+        vm.expectRevert(bytes("P2PL: Modification value must be > 0"));
+        p2pLending.requestPaymentModification(agreementId, P2PLending.PaymentModificationType.DueDateExtension, 0);
+        
+        // Scenario 2: New due date is not later than current due date
+        P2PLending.LoanAgreement memory agreement = p2pLending.getLoanAgreementDetails(agreementId);
+        vm.expectRevert(bytes("P2PL: New due date must be later"));
+        p2pLending.requestPaymentModification(agreementId, P2PLending.PaymentModificationType.DueDateExtension, agreement.dueDate - 1 days); // Not later
+        vm.expectRevert(bytes("P2PL: New due date must be later"));
+        p2pLending.requestPaymentModification(agreementId, P2PLending.PaymentModificationType.DueDateExtension, agreement.dueDate); // Same, not later
+        vm.stopPrank();
+    }
+
+    function test_RevertIf_RespondModification_NotLender() public {
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(100e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 * ONE_DAY_SECONDS, 0, address(0));
+        mockDai.approve(address(p2pLending), 100e18);
+        vm.stopPrank();
+        vm.startPrank(borrower);
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
+        p2pLending.requestPaymentModification(agreementId, P2PLending.PaymentModificationType.DueDateExtension, block.timestamp + 10 days);
+        vm.stopPrank();
+
+        vm.startPrank(borrower); // Attacker (borrower)
+        vm.expectRevert(bytes("P2PL: Not lender"));
+        p2pLending.respondToPaymentModification(agreementId, true);
+        vm.stopPrank();
+    }
+
+    function test_RevertIf_RespondModification_NoPendingModification() public {
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(100e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 * ONE_DAY_SECONDS, 0, address(0));
+        mockDai.approve(address(p2pLending), 100e18);
+        vm.stopPrank();
+        vm.startPrank(borrower);
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
+        // No request made
+        vm.stopPrank();
+
+        vm.startPrank(lender);
+        vm.expectRevert(bytes("P2PL: No pending modification"));
+        p2pLending.respondToPaymentModification(agreementId, true);
+        vm.stopPrank();
     }
 } 

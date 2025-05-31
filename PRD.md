@@ -39,8 +39,8 @@ The overall development is structured in phases, aiming to incorporate various s
 
 **Development & Testing:**
 1.  **Contract Refinement:** Review and update existing Solidity contracts to fully support all user interaction flows present in the `uncle` application. This includes handling loan repayment schedules, requests for payment extensions, and the consequences of such actions on loan status and reputation.
-2.  **Flow Deployment:** Deploy the refined contracts to the Flow blockchain (testnet or local emulator).
-3.  **Ethers.js Testing:** Develop comprehensive test scripts using Ethers.js to interact with the deployed contracts on Flow, verifying all functionalities, especially the new loan management flows.
+2.  **Flow Deployment:** Deploy the refined contracts to the Flow blockchain (testnet).
+3.  **Ethers.js Testing:** Develop comprehensive test scripts using Ethers.js to interact with the deployed contracts on Flow (testnet), verifying all functionalities, especially the new loan management flows.
 
 ### Phase 2: Frontend Integration & dApp Functionality
 **Goal:** Connect the `uncle` Next.js frontend to the smart contracts deployed on Flow, enabling full dApp functionality, including wallet connection.

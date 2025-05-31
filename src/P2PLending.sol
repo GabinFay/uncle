@@ -34,22 +34,28 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
      */
     IReputationOApp public reputationOApp; // To be reviewed if still needed alongside direct Reputation.sol calls
 
-    // LoanVoucherDetail struct removed as vouching details are fully managed within Reputation.sol
-    // and P2PLending queries Reputation.sol for active vouches when needed (e.g., during default).
+    /**
+     * @notice Defines the types of payment modifications a borrower can request.
+     */
+    enum PaymentModificationType {
+        DueDateExtension,       // Request to extend the loan's due date
+        PartialPaymentAgreement // Request to make an agreed-upon partial payment amount
+    }
 
     /**
      * @notice Defines the possible states of a loan offer, request, or agreement.
      */
-    enum LoanStatus { 
-        Pending,    // Initial state for old loan model, potentially reusable
-        Active,     // Loan agreement is active and funds disbursed
-        Repaid,     // Loan agreement has been fully repaid
-        Defaulted,  // Loan agreement is past due and marked as defaulted
-        Liquidated, // Collateral seized (more relevant for old model, P2P default handles collateral transfer)
-        OfferOpen,  // A loan offer is available to be accepted
-        RequestOpen,// A loan request is available to be funded
-        AgreementReached, // Offer/Request has been matched, prior to becoming Active (or during same tx)
-        Cancelled   // Offer or Request has been cancelled before agreement
+    enum LoanStatus {
+        OfferOpen,          // Lender has created an offer, waiting for borrower
+        RequestOpen,        // Borrower has created a request, waiting for lender
+        AgreementReached,   // Offer accepted or request funded, but funds not yet transferred (intermediate)
+        Active,             // Funds transferred, loan is ongoing
+        Repaid,             // Loan fully repaid
+        Defaulted,          // Loan not repaid by due date and past grace period
+        Cancelled,          // Offer or request cancelled before agreement
+        PendingModificationApproval, // Borrower requested a modification, awaiting lender response
+        Active_PartialPaymentAgreed, // Lender approved a partial payment agreement, loan active
+        Overdue             // Loan is past its due date but not yet defaulted (within grace period or awaiting resolution)
     }
 
     // This Loan struct is from the old model, will be replaced by P2P structs
@@ -161,6 +167,11 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
         uint256 dueDate;
         uint256 amountPaid;
         LoanStatus status; // e.g., Active, Repaid, Defaulted
+
+        // Fields for payment modification requests
+        PaymentModificationType requestedModificationType;
+        uint256 requestedModificationValue; // e.g., new due date timestamp or proposed partial payment amount
+        bool modificationApprovedByLender; // Tracks if the current request was approved
         // Link to vouches if applicable from Reputation.sol
     }
 
@@ -249,8 +260,12 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
      * @param borrower Address of the borrower in the agreement.
      * @param amount Principal amount of the loan.
      * @param token Token of the principal amount.
+     * @param interestRate Agreed interest rate for the loan.
+     * @param duration Agreed duration of the loan.
+     * @param startTime Timestamp when the loan became active.
+     * @param dueDate Timestamp when the loan is due.
      */
-    event LoanAgreementFormed(bytes32 indexed agreementId, address indexed lender, address indexed borrower, uint256 amount, address token);
+    event LoanAgreementCreated(bytes32 indexed agreementId, address indexed lender, address indexed borrower, uint256 amount, address token, uint256 interestRate, uint256 duration, uint256 startTime, uint256 dueDate);
     /**
      * @notice Emitted when a repayment is made on a loan agreement.
      * @param agreementId ID of the loan agreement.
@@ -268,7 +283,24 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
      * @param agreementId ID of the defaulted loan agreement.
      */
     event LoanAgreementDefaulted(bytes32 indexed agreementId);
-    // Add events for collateral handling, extensions, etc.
+    /**
+     * @notice Emitted when a borrower requests a payment modification.
+     * @param agreementId The ID of the loan agreement.
+     * @param borrower The address of the borrower requesting the modification.
+     * @param modificationType The type of modification requested (e.g., DueDateExtension).
+     * @param value The value associated with the modification (e.g., new due date timestamp or proposed partial payment amount).
+     */
+    event PaymentModificationRequested(bytes32 indexed agreementId, address indexed borrower, PaymentModificationType modificationType, uint256 value);
+
+    /**
+     * @notice Emitted when a lender responds to a payment modification request.
+     * @param agreementId The ID of the loan agreement.
+     * @param lender The address of the lender responding.
+     * @param approved True if the lender approved the request, false otherwise.
+     * @param modificationType The type of modification that was requested.
+     * @param originalRequestedValue The original value associated with the modification request.
+     */
+    event PaymentModificationResponded(bytes32 indexed agreementId, address indexed lender, bool approved, PaymentModificationType modificationType, uint256 originalRequestedValue);
 
     // --- Modifiers ---
     /**
@@ -520,13 +552,16 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
             startTime: block.timestamp,
             dueDate: block.timestamp + offer.duration,
             amountPaid: 0,
-            status: LoanStatus.Active
+            status: LoanStatus.Active,
+            requestedModificationType: PaymentModificationType.DueDateExtension,
+            requestedModificationValue: 0,
+            modificationApprovedByLender: false
         });
 
         userLoanAgreementsAsLender[offer.lender].push(agreementId);
         userLoanAgreementsAsBorrower[msg.sender].push(agreementId);
 
-        emit LoanAgreementFormed(agreementId, offer.lender, msg.sender, offer.offerAmount, offer.loanToken);
+        emit LoanAgreementCreated(agreementId, offer.lender, msg.sender, offer.offerAmount, offer.loanToken, offer.interestRate, offer.duration, block.timestamp, block.timestamp + offer.duration);
         // Call Reputation.sol - details to be added if loan formation affects reputation immediately
         // For now, reputation is primarily affected by repayment/default events.
 
@@ -586,13 +621,16 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
             startTime: block.timestamp,
             dueDate: block.timestamp + request.proposedDuration,
             amountPaid: 0,
-            status: LoanStatus.Active
+            status: LoanStatus.Active,
+            requestedModificationType: PaymentModificationType.DueDateExtension,
+            requestedModificationValue: 0,
+            modificationApprovedByLender: false
         });
 
         userLoanAgreementsAsLender[msg.sender].push(agreementId);
         userLoanAgreementsAsBorrower[request.borrower].push(agreementId);
 
-        emit LoanAgreementFormed(agreementId, msg.sender, request.borrower, request.requestAmount, request.loanToken);
+        emit LoanAgreementCreated(agreementId, msg.sender, request.borrower, request.requestAmount, request.loanToken, request.proposedInterestRate, request.proposedDuration, block.timestamp, block.timestamp + request.proposedDuration);
         // Call Reputation.sol - similar to acceptLoanOffer
 
         return agreementId;
@@ -797,5 +835,103 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
 
     // To be implemented based on PRD.md:
     // requestP2PLoanExtension(...)
+
+    // --- Borrower/Lender Actions for Loan Modifications ---
+
+    /**
+     * @notice Allows a borrower to request a modification to their loan agreement terms.
+     * @param _agreementId The ID of the loan agreement to modify.
+     * @param _modificationType The type of modification being requested (e.g., DueDateExtension).
+     * @param _value The value associated with the modification (e.g., new proposed due date timestamp, or proposed partial payment amount).
+     * @dev Only the borrower of an Active or Overdue loan can request a modification.
+     *      The loan status will be set to PendingModificationApproval.
+     */
+    function requestPaymentModification(
+        bytes32 _agreementId,
+        PaymentModificationType _modificationType,
+        uint256 _value
+    ) external nonReentrant {
+        LoanAgreement storage agreement = loanAgreements[_agreementId];
+        require(agreement.borrower == msg.sender, "P2PL: Not borrower");
+        require(agreement.status == LoanStatus.Active || agreement.status == LoanStatus.Overdue, "P2PL: Loan not active/overdue");
+        // Potentially add check: require(!agreement.modificationApprovedByLender, "P2PL: Prior request still active/unprocessed");
+        // This would prevent spamming requests if a lender hasn't acted on a previous one.
+        // Or, a new request implicitly cancels/overwrites a previous one.
+        // For now, allowing overwrite.
+
+        require(_value > 0, "P2PL: Modification value must be > 0"); // Basic validation for value
+        if (_modificationType == PaymentModificationType.DueDateExtension) {
+            require(_value > agreement.dueDate, "P2PL: New due date must be later");
+        }
+        // For PartialPaymentAgreement, _value is the proposed partial amount. Further validation might be needed (e.g., not > remaining balance).
+
+        agreement.requestedModificationType = _modificationType;
+        agreement.requestedModificationValue = _value;
+        agreement.modificationApprovedByLender = false; // Reset approval status for new request
+        agreement.status = LoanStatus.PendingModificationApproval;
+
+        emit PaymentModificationRequested(_agreementId, msg.sender, _modificationType, _value);
+    }
+
+    /**
+     * @notice Allows a lender to respond to a borrower's payment modification request.
+     * @param _agreementId The ID of the loan agreement.
+     * @param _approved True if the lender approves the modification, false otherwise.
+     * @dev Only the lender of a loan with status PendingModificationApproval can call this.
+     *      Updates loan terms or status based on approval.
+     */
+    function respondToPaymentModification(
+        bytes32 _agreementId,
+        bool _approved
+    ) external nonReentrant {
+        LoanAgreement storage agreement = loanAgreements[_agreementId];
+        require(agreement.lender == msg.sender, "P2PL: Not lender");
+        require(agreement.status == LoanStatus.PendingModificationApproval, "P2PL: No pending modification");
+
+        PaymentModificationType originalType = agreement.requestedModificationType;
+        uint256 originalValue = agreement.requestedModificationValue;
+
+        if (_approved) {
+            agreement.modificationApprovedByLender = true;
+            if (originalType == PaymentModificationType.DueDateExtension) {
+                agreement.dueDate = originalValue;
+                // Status becomes Active if new dueDate is in future, or Overdue if original due date has passed but new one is also in past (edge case, but handled by isOverdue check)
+                // For simplicity, just set to Active. Overdue check is dynamic in getters.
+                // If block.timestamp > agreement.dueDate (original), but < originalValue (new dueDate), it should be Active.
+                // If block.timestamp > originalValue (new dueDate), it will be Overdue.
+                // So, if it was Overdue, it might become Active again if new due date is in the future.
+                if (block.timestamp < agreement.dueDate) {
+                    agreement.status = LoanStatus.Active;
+                } else {
+                    agreement.status = LoanStatus.Overdue; // Remains overdue or becomes overdue if new date is also past
+                }
+                 // TODO: Consider if reputation should be impacted here positively for lender being flexible?
+            } else if (originalType == PaymentModificationType.PartialPaymentAgreement) {
+                // The lender agrees to the borrower making a partial payment of `originalValue`.
+                // The loan status reflects this agreement, but the actual payment is separate.
+                agreement.status = LoanStatus.Active_PartialPaymentAgreed;
+                // No change to dueDate or amountPaid here. The `originalValue` is the *agreed* partial payment amount.
+            }
+        } else {
+            agreement.modificationApprovedByLender = false; // Explicitly set though it was already false
+            // Revert status to what it was before the request, or to Overdue if applicable
+            // This requires knowing the previous status. For now, simply set to Active or Overdue.
+            if (block.timestamp < agreement.dueDate) {
+                agreement.status = LoanStatus.Active;
+            } else {
+                agreement.status = LoanStatus.Overdue;
+            }
+            // TODO: Consider if reputation should be impacted here negatively for borrower if lender rejects often?
+        }
+
+        // Clear the request fields after processing to prevent re-processing or confusion
+        // agreement.requestedModificationType = default; // Solidity doesn't have a direct default for enums easily
+        // agreement.requestedModificationValue = 0;
+        // Let's keep them for history for now, modificationApprovedByLender is the main gate.
+
+        emit PaymentModificationResponded(_agreementId, msg.sender, _approved, originalType, originalValue);
+        // Potentially call reputationContract here based on approval/rejection and type
+        // e.g., reputationContract.recordLoanPaymentOutcome(agreement.borrower, _agreementId, originalType == PaymentModificationType.DueDateExtension, _approved, false /* metTerms yet to be seen */ );
+    }
 
 } 
