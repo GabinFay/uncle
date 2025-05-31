@@ -65,17 +65,17 @@ This document tracks the development progress of the smart contracts outlined in
     *   [X] Handle overpayments (refund or credit).
     *   [X] Logic for `LoanStatus.Defaulted` based on `dueDate` (via `checkAndSetDefaultStatus`).
     *   [X] More detailed `liquidateLoan` logic for `Defaulted` loans (collateral seizure confirmed).
-    *   [ ] Vouch slashing interaction within `liquidateLoan` (Deferred: pending `LoanContract` storing individual voucher details).
-    *   [X] Unit tests for these scenarios (24 tests passing in `test/LoanContract.t.sol`).
-    *   **Status:** Mostly Completed (Vouch Slashing call deferred)
+    *   [X] Vouch slashing interaction within `liquidateLoan` (Addressed by Task 1.5).
+    *   [X] Unit tests for these scenarios (24 tests passing in `LoanContract.t.sol`).
+    *   **Status:** Completed
 
 *   **Task 1.2: `SocialVouching.sol` - Vouch Slashing & Rewards Integration**
     *   [X] Refined `slashVouch` and `rewardVoucher` to be callable only by `LoanContract` (via `onlyLoanContract` modifier and `setLoanContractAddress`).
     *   [X] `SocialVouching.slashVouch` transfers slashed funds to a specified `recipient` (e.g., Treasury).
-    *   [ ] `LoanContract.liquidateLoan` to call `SocialVouching.slashVouch` (Deferred: requires `LoanContract` to track specific vouchers per loan).
+    *   [X] `LoanContract.liquidateLoan` to call `SocialVouching.slashVouch` (Addressed by Task 1.5).
     *   [ ] Implement full logic for distributing rewards via `rewardVoucher` (currently placeholder, callable by `LoanContract`).
     *   [X] Unit tests for `SocialVouching` access control (19 tests passing in `test/SocialVouching.t.sol`).
-    *   **Status:** Partially Completed (`SocialVouching` prepared, `LoanContract` integration for calling slash/reward deferred)
+    *   **Status:** Mostly Completed (Reward logic still placeholder)
 
 *   **Task 1.3: Pyth Network Integration (Placeholder)**
     *   [X] Define an `IPyth.sol` interface.
@@ -92,6 +92,13 @@ This document tracks the development progress of the smart contracts outlined in
     *   [X] Unit tests for `setReputationOAppAddress`.
     *   [ ] Unit tests mocking `IReputationOApp` calls (Deferred: Reputation update logic not yet implemented in `LoanContract`).
     *   **Status:** Mostly Completed (Core setup done, detailed logic deferred)
+
+*   **Task 1.5: Refactor `LoanContract` to Track Individual Loan Vouches (New)**
+    *   [X] Modify `Loan` struct to store individual voucher details (e.g., array of {voucherAddress, tokenAddress, amountStakedAtLoanTime}).
+    *   [X] Update `applyForLoan` to query `SocialVouching` (or be passed an array of voucher addresses) active vouches for the borrower and store relevant details in the `Loan` struct.
+    *   [X] Update `liquidateLoan` to iterate stored voucher details and call `SocialVouching.slashVouch` appropriately.
+    *   [X] Update/add unit tests for these changes in `LoanContract.t.sol` (including new `test_LiquidateLoan_Success_WithVouchSlashing`) and `Integration.t.sol`.
+    *   **Status:** Completed
 
 ## Future Sprints (Outline)
 

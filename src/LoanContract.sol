@@ -23,6 +23,12 @@ contract LoanContract is Ownable, ReentrancyGuard {
     IReputationOApp public reputationOApp; // Reputation OApp address
     // IReputationOApp public reputationOApp; // Placeholder
 
+    struct LoanVoucherDetail {
+        address voucherAddress;
+        address tokenAddress;
+        uint256 amountVouchedAtLoanTime;
+    }
+
     enum LoanStatus { Pending, Active, Repaid, Defaulted, Liquidated }
 
     struct Loan {
@@ -37,6 +43,7 @@ contract LoanContract is Ownable, ReentrancyGuard {
         uint256 collateralAmount;
         address collateralToken;
         uint256 totalVouchedAmountAtApplication; // Vouched amount snapshotted at loan application
+        LoanVoucherDetail[] vouches; // << NEW: Array to store individual vouches active at loan time
         uint256 amountPaid; // To track repayments
         LoanStatus status;
     }
@@ -92,7 +99,8 @@ contract LoanContract is Ownable, ReentrancyGuard {
         uint256 interestRate_,
         uint256 duration_,
         uint256 collateralAmount_,
-        address collateralToken_
+        address collateralToken_,
+        address[] calldata voucherAddressesToConsider // << NEW: Array of voucher addresses to consider for this loan
     ) external nonReentrant onlyVerifiedUser(msg.sender) returns (bytes32 newLoanId) {
         require(principalAmount_ > 0, "Principal must be positive");
         require(loanToken_ != address(0), "Invalid loan token");
@@ -102,8 +110,31 @@ contract LoanContract is Ownable, ReentrancyGuard {
         // uint256 aiScore = getAIScore(msg.sender);
         // require(aiScore >= MIN_AI_SCORE_FOR_LOAN, "AI score too low");
 
-        uint256 currentVouchedAmount = socialVouching.getTotalVouchedAmountForBorrower(msg.sender);
-        // require(currentVouchedAmount >= requiredVouchAmount(principalAmount_), "Insufficient vouched amount");
+        uint256 calculatedTotalVouchedAmount = 0;
+        LoanVoucherDetail[] memory activeLoanVouches = new LoanVoucherDetail[](voucherAddressesToConsider.length);
+        uint256 activeVouchesCount = 0;
+
+        for (uint i = 0; i < voucherAddressesToConsider.length; i++) {
+            address voucherAddr = voucherAddressesToConsider[i];
+            if (voucherAddr != address(0) && voucherAddr != msg.sender) { // Basic checks
+                SocialVouching.Vouch memory svVouch = socialVouching.getVouchDetails(msg.sender, voucherAddr);
+                if (svVouch.active && svVouch.amountStaked > 0) {
+                    activeLoanVouches[activeVouchesCount] = LoanVoucherDetail({
+                        voucherAddress: svVouch.voucher, // Should be voucherAddr
+                        tokenAddress: svVouch.tokenAddress,
+                        amountVouchedAtLoanTime: svVouch.amountStaked
+                    });
+                    calculatedTotalVouchedAmount += svVouch.amountStaked;
+                    activeVouchesCount++;
+                }
+            }
+        }
+        
+        // Resize activeLoanVouches to actual count if necessary
+        LoanVoucherDetail[] memory finalActiveLoanVouches = new LoanVoucherDetail[](activeVouchesCount);
+        for (uint i = 0; i < activeVouchesCount; i++) {
+            finalActiveLoanVouches[i] = activeLoanVouches[i];
+        }
 
         // Placeholder: LTV Check with Pyth if collateral is provided
         if (collateralAmount_ > 0 && collateralToken_ != address(0)) {
@@ -133,7 +164,8 @@ contract LoanContract is Ownable, ReentrancyGuard {
             dueDate: 0, // Initialized to 0, set upon approval
             collateralAmount: collateralAmount_,
             collateralToken: collateralToken_,
-            totalVouchedAmountAtApplication: currentVouchedAmount,
+            totalVouchedAmountAtApplication: calculatedTotalVouchedAmount, // Use calculated amount
+            vouches: finalActiveLoanVouches, // Store the collected active vouches
             amountPaid: 0,
             status: LoanStatus.Pending
         });
@@ -244,16 +276,29 @@ contract LoanContract is Ownable, ReentrancyGuard {
             // bytes32 collateralPriceId = getPriceIdForToken(loan.collateralToken);
             // IPyth.Price memory price = pyth.getPrice(collateralPriceId);
             // seizedCollateralValue = (loan.collateralAmount * uint256(price.price)) / (10**uint256(-price.expo));
-            // For now, seizedCollateralValue is just the amount of tokens
             seizedCollateralValue = loan.collateralAmount; 
-
             IERC20(loan.collateralToken).transfer(treasuryAddress, loan.collateralAmount);
         }
 
-        // Slash vouches
-        // This is a simplified call. A more robust system would determine how much each voucher loses.
-        // socialVouching.slashVouch(loan.borrower, voucherAddress, amountToSlash, treasuryAddress);
-        // Need a way to iterate over vouchers or have SocialVouching manage the distribution of slashes.
+        // Slash vouches recorded at the time of loan application
+        if (address(socialVouching) != address(0)) {
+            for (uint i = 0; i < loan.vouches.length; i++) {
+                LoanVoucherDetail memory vouchDetail = loan.vouches[i];
+                // Check if the vouch might still be active in SocialVouching before attempting to slash.
+                // This is a defensive check; SocialVouching.slashVouch will also check.
+                SocialVouching.Vouch memory currentSVVouch = socialVouching.getVouchDetails(loan.borrower, vouchDetail.voucherAddress);
+                if (currentSVVouch.active && currentSVVouch.amountStaked > 0) {
+                    uint256 amountToAttemptSlash = vouchDetail.amountVouchedAtLoanTime; // For now, attempt to slash the original amount
+                    if (amountToAttemptSlash > currentSVVouch.amountStaked) {
+                        amountToAttemptSlash = currentSVVouch.amountStaked; // Don't slash more than currently available
+                    }
+                    if (amountToAttemptSlash > 0) {
+                        // socialVouching.slashVouch expects: borrower, voucher, amountToSlash, recipient
+                        socialVouching.slashVouch(loan.borrower, vouchDetail.voucherAddress, amountToAttemptSlash, treasuryAddress);
+                    }
+                }
+            }
+        }
         
         loan.status = LoanStatus.Liquidated;
         emit LoanLiquidated(loanId, seizedCollateralValue);

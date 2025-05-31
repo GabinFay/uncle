@@ -33,7 +33,7 @@ contract IntegrationTest is Test {
     uint256 constant INITIAL_MINT_AMOUNT = 1_000_000 * 1e18; // For DAI (18 decimals)
     bytes32 constant DUMMY_WORLD_ID_HASH = keccak256(abi.encodePacked("verified_user1"));
     bytes32 constant DUMMY_VOUCHER_WORLD_ID_HASH = keccak256(abi.encodePacked("verified_voucher1"));
-
+    address[] emptyVoucherAddresses; // For applyForLoan calls not testing vouching
 
     function setUp() public {
         // Deploy contracts
@@ -93,7 +93,8 @@ contract IntegrationTest is Test {
             interestRate,      // interestRate_
             loanDuration,      // duration_
             collateralAmount,  // collateralAmount_
-            address(mockUSDC)  // collateralToken_
+            address(mockUSDC), // collateralToken_
+            emptyVoucherAddresses // vouchersToConsider
         );
         vm.stopPrank();
         assertTrue(loanId != 0, "Loan ID should not be zero");
@@ -177,6 +178,9 @@ contract IntegrationTest is Test {
         uint256 interestRate = 600; // 6%
         uint256 loanDuration = 45 days;
 
+        address[] memory vouchersToConsider = new address[](1);
+        vouchersToConsider[0] = voucher1;
+
         vm.startPrank(user1);
         // No direct collateral approval needed as we are testing vouching as primary support
         bytes32 loanId = loanContract.applyForLoan(
@@ -185,7 +189,8 @@ contract IntegrationTest is Test {
             interestRate,
             loanDuration,
             0,                 // No direct collateral amount
-            address(0)         // No direct collateral token
+            address(0),        // No direct collateral token
+            vouchersToConsider // Pass the voucher address
         );
         vm.stopPrank();
         assertTrue(loanId != 0, "Loan ID should not be zero for vouched loan");

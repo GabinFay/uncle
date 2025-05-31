@@ -31,6 +31,7 @@ contract LoanContractTest is Test {
     uint256 constant DEFAULT_INTEREST_RATE = 500; // 5.00%
     uint256 constant ZERO_COLLATERAL_AMOUNT = 0;
     address constant ZERO_COLLATERAL_TOKEN = address(0);
+    address[] emptyVoucherAddresses; // For applyForLoan calls not testing vouching
 
     // Events from LoanContract.sol
     event LoanApplied(bytes32 indexed loanId, address indexed borrower, uint256 amount, address token);
@@ -56,6 +57,7 @@ contract LoanContractTest is Test {
         
         vm.prank(owner);
         treasury.setLoanContractAddress(address(loanContract));
+        socialVouching.setLoanContractAddress(address(loanContract)); // Allow LoanContract to call restricted functions
         // Removed platform wallet/fee setup as they are not in this LoanContract.sol version
 
         mockDai = new MockERC20("Mock DAI", "mDAI", 18);
@@ -83,7 +85,8 @@ contract LoanContractTest is Test {
             DEFAULT_INTEREST_RATE, 
             duration, 
             ZERO_COLLATERAL_AMOUNT, 
-            ZERO_COLLATERAL_TOKEN
+            ZERO_COLLATERAL_TOKEN,
+            emptyVoucherAddresses
         );
         vm.stopPrank();
 
@@ -110,7 +113,8 @@ contract LoanContractTest is Test {
             DEFAULT_INTEREST_RATE, 
             duration, 
             collateralAmount, 
-            address(mockDai) // Using mDAI as collateral token
+            address(mockDai), // Using mDAI as collateral token
+            emptyVoucherAddresses
         );
         vm.stopPrank();
 
@@ -125,21 +129,21 @@ contract LoanContractTest is Test {
         address unverifiedBorrower = vm.addr(5);
         vm.startPrank(unverifiedBorrower);
         vm.expectRevert(bytes("LoanContract: User not World ID verified"));
-        loanContract.applyForLoan(100*1e18, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, ZERO_COLLATERAL_AMOUNT,ZERO_COLLATERAL_TOKEN);
+        loanContract.applyForLoan(100*1e18, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, ZERO_COLLATERAL_AMOUNT,ZERO_COLLATERAL_TOKEN, emptyVoucherAddresses);
         vm.stopPrank();
     }
 
     function test_RevertIf_ApplyForLoan_ZeroPrincipal() public {
         vm.startPrank(borrower);
         vm.expectRevert(bytes("Principal must be positive"));
-        loanContract.applyForLoan(0, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, ZERO_COLLATERAL_AMOUNT,ZERO_COLLATERAL_TOKEN);
+        loanContract.applyForLoan(0, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, ZERO_COLLATERAL_AMOUNT,ZERO_COLLATERAL_TOKEN, emptyVoucherAddresses);
         vm.stopPrank();
     }
 
     function test_RevertIf_ApplyForLoan_InvalidLoanToken() public {
         vm.startPrank(borrower);
         vm.expectRevert(bytes("Invalid loan token"));
-        loanContract.applyForLoan(100*1e18, address(0), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, ZERO_COLLATERAL_AMOUNT,ZERO_COLLATERAL_TOKEN);
+        loanContract.applyForLoan(100*1e18, address(0), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, ZERO_COLLATERAL_AMOUNT,ZERO_COLLATERAL_TOKEN, emptyVoucherAddresses);
         vm.stopPrank();
     }
 
@@ -147,7 +151,7 @@ contract LoanContractTest is Test {
     function test_ApproveLoan_Success_And_Disburses() public {
         uint256 principalAmount = 100 * 1e18;
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank();
 
         uint256 borrowerInitialDAIBalance = mockDai.balanceOf(borrower);
@@ -175,7 +179,7 @@ contract LoanContractTest is Test {
 
     function test_RevertIf_ApproveLoan_NotOwner() public {
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(100*1e18, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(100*1e18, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank();
 
         vm.startPrank(borrower); 
@@ -193,7 +197,7 @@ contract LoanContractTest is Test {
 
     function test_RevertIf_ApproveLoan_NotPending() public {
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(100*1e18, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(100*1e18, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank();
 
         vm.startPrank(owner);
@@ -208,7 +212,7 @@ contract LoanContractTest is Test {
         uint256 principalAmount = 100 * 1e18;
         uint256 duration = 30 * ONE_DAY_SECONDS;
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, duration, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, duration, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank();
 
         vm.startPrank(owner);
@@ -237,7 +241,7 @@ contract LoanContractTest is Test {
 
     function test_RevertIf_RepayLoan_NotBorrower() public {
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(100*1e18, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(100*1e18, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank();
         vm.prank(owner); loanContract.approveLoan(loanId); vm.stopPrank();
 
@@ -253,7 +257,7 @@ contract LoanContractTest is Test {
 
     function test_RevertIf_RepayLoan_NotActive() public {
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(100*1e18, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(100*1e18, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0), emptyVoucherAddresses);
         // Loan is Pending, not Active
         uint256 paymentAmount = 50 * 1e18;
         mockDai.approve(address(loanContract), paymentAmount);
@@ -265,7 +269,7 @@ contract LoanContractTest is Test {
     function test_RepayLoan_ERC20_PartialPayment() public {
         uint256 principalAmount = 100 * 1e18;
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank();
         vm.prank(owner); loanContract.approveLoan(loanId); vm.stopPrank();
 
@@ -288,7 +292,7 @@ contract LoanContractTest is Test {
     function test_RepayLoan_ERC20_PartialPayment_ThenFullPayment() public {
         uint256 principalAmount = 100 * 1e18;
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank();
         vm.prank(owner); loanContract.approveLoan(loanId); vm.stopPrank();
 
@@ -318,7 +322,7 @@ contract LoanContractTest is Test {
     function test_RepayLoan_ERC20_Overpayment_Refund() public {
         uint256 principalAmount = 100 * 1e18;
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank();
         vm.prank(owner); loanContract.approveLoan(loanId); vm.stopPrank();
 
@@ -354,7 +358,7 @@ contract LoanContractTest is Test {
     function test_RevertIf_RepayLoan_ZeroPaymentAmount() public {
         uint256 principalAmount = 100 * 1e18;
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank();
         vm.prank(owner); loanContract.approveLoan(loanId); vm.stopPrank();
 
@@ -367,7 +371,7 @@ contract LoanContractTest is Test {
     function test_RevertIf_RepayLoan_AlreadyFullyPaid() public {
         uint256 principalAmount = 100 * 1e18;
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, 30*ONE_DAY_SECONDS, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank();
         vm.prank(owner); loanContract.approveLoan(loanId); vm.stopPrank();
 
@@ -409,7 +413,7 @@ contract LoanContractTest is Test {
         uint256 principalAmount = 100 * 1e18;
         uint256 duration = 30 * ONE_DAY_SECONDS;
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, duration, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, duration, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank();
         vm.prank(owner); loanContract.approveLoan(loanId); vm.stopPrank();
 
@@ -428,7 +432,7 @@ contract LoanContractTest is Test {
         uint256 principalAmount = 100 * 1e18;
         uint256 duration = 30 * ONE_DAY_SECONDS;
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, duration, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, duration, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank();
         vm.prank(owner); loanContract.approveLoan(loanId); vm.stopPrank();
 
@@ -443,7 +447,7 @@ contract LoanContractTest is Test {
         uint256 principalAmount = 100 * 1e18;
         uint256 duration = 30 * ONE_DAY_SECONDS;
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, duration, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, duration, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank(); // Loan is Pending
 
         vm.warp(block.timestamp + duration + 1 days); 
@@ -458,7 +462,7 @@ contract LoanContractTest is Test {
 
         vm.startPrank(borrower);
         mockDai.approve(address(loanContract), collateralAmount);
-        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, duration, collateralAmount, address(mockDai));
+        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, duration, collateralAmount, address(mockDai), emptyVoucherAddresses);
         vm.stopPrank();
         vm.prank(owner); loanContract.approveLoan(loanId); vm.stopPrank();
 
@@ -484,7 +488,7 @@ contract LoanContractTest is Test {
         uint256 principalAmount = 100 * 1e18;
         uint256 duration = 30 * ONE_DAY_SECONDS;
         vm.startPrank(borrower);
-        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, duration, 0, address(0));
+        bytes32 loanId = loanContract.applyForLoan(principalAmount, address(mockDai), DEFAULT_INTEREST_RATE, duration, 0, address(0), emptyVoucherAddresses);
         vm.stopPrank();
         vm.prank(owner); loanContract.approveLoan(loanId); // Loan is Active
 
@@ -526,5 +530,79 @@ contract LoanContractTest is Test {
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, borrower));
         loanContract.setReputationOAppAddress(newReputationOApp);
         vm.stopPrank();
+    }
+
+    // --- Vouch Slashing during Liquidation Test ---
+    event VouchSlashed(address indexed borrower, address indexed voucher, uint256 amountSlashed); // From SocialVouching
+
+    function test_LiquidateLoan_Success_WithVouchSlashing() public {
+        uint256 principalAmount = 200 * 1e18;
+        uint256 duration = 30 * ONE_DAY_SECONDS;
+        uint256 vouchAmountByVoucher1 = 100 * 1e18; // Using mockDai as vouch token for simplicity here
+
+        // Setup SocialVouching: voucher1 vouches for borrower
+        vm.startPrank(voucher1);
+        mockDai.approve(address(socialVouching), vouchAmountByVoucher1);
+        socialVouching.addVouch(borrower, vouchAmountByVoucher1, address(mockDai));
+        vm.stopPrank();
+        assertEq(socialVouching.getTotalVouchedAmountForBorrower(borrower), vouchAmountByVoucher1, "Vouch not added correctly");
+
+        // Borrower applies for loan, specifying voucher1
+        address[] memory vouchersToConsider = new address[](1);
+        vouchersToConsider[0] = voucher1;
+
+        vm.startPrank(borrower);
+        bytes32 loanId = loanContract.applyForLoan(
+            principalAmount, 
+            address(mockDai), 
+            DEFAULT_INTEREST_RATE, 
+            duration, 
+            0, // No direct collateral
+            address(0),
+            vouchersToConsider
+        );
+        vm.stopPrank();
+
+        LoanContract.Loan memory loanBeforeApproval = loanContract.getLoanDetails(loanId);
+        assertEq(loanBeforeApproval.totalVouchedAmountAtApplication, vouchAmountByVoucher1, "Total vouched amount not recorded correctly in loan");
+        assertEq(loanBeforeApproval.vouches.length, 1, "Loan vouches array length incorrect");
+        assertEq(loanBeforeApproval.vouches[0].voucherAddress, voucher1, "Voucher address in loan incorrect");
+        assertEq(loanBeforeApproval.vouches[0].amountVouchedAtLoanTime, vouchAmountByVoucher1, "Vouch amount in loan incorrect");
+
+        // Approve loan
+        vm.prank(owner); loanContract.approveLoan(loanId); vm.stopPrank();
+
+        // Default loan
+        vm.warp(block.timestamp + duration + 1 days); 
+        loanContract.checkAndSetDefaultStatus(loanId);
+
+        uint256 socialVouchingBalanceBeforeSlash = mockDai.balanceOf(address(socialVouching));
+        uint256 treasuryBalanceBeforeSlash = mockDai.balanceOf(address(treasury));
+        // uint256 voucher1BalanceBeforeSlash = mockDai.balanceOf(voucher1); // Marked as unused by compiler
+
+        vm.startPrank(owner);
+        // Expect VouchSlashed from SocialVouching (called by LoanContract)
+        vm.expectEmit(address(socialVouching));
+        emit VouchSlashed(borrower, voucher1, vouchAmountByVoucher1);
+
+        // Then expect LoanLiquidated from LoanContract
+        vm.expectEmit(address(loanContract));
+        emit LoanLiquidated(loanId, 0); // Collateral seized is 0 in this specific test case
+        
+        loanContract.liquidateLoan(loanId);
+        vm.stopPrank();
+
+        LoanContract.Loan memory loanAfterLiquidation = loanContract.getLoanDetails(loanId);
+        assertEq(uint256(loanAfterLiquidation.status), uint256(LoanContract.LoanStatus.Liquidated), "Loan status should be Liquidated");
+
+        // Check SocialVouching contract's balance (decreased by slashAmount)
+        assertEq(mockDai.balanceOf(address(socialVouching)), socialVouchingBalanceBeforeSlash - vouchAmountByVoucher1, "SocialVouching balance incorrect after slash");
+        // Check Treasury's balance (increased by slashAmount)
+        assertEq(mockDai.balanceOf(address(treasury)), treasuryBalanceBeforeSlash + vouchAmountByVoucher1, "Treasury balance incorrect after slash");
+        
+        // Check voucher's internal stake in SocialVouching (should be 0)
+        SocialVouching.Vouch memory svVouchAfterSlash = socialVouching.getVouchDetails(borrower, voucher1);
+        assertFalse(svVouchAfterSlash.active, "Voucher's vouch in SocialVouching should be inactive");
+        assertEq(svVouchAfterSlash.amountStaked, 0, "Voucher's staked amount in SocialVouching should be 0");
     }
 } 
