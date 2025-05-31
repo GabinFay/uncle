@@ -14,47 +14,59 @@ A peer-to-peer lending platform built on trust and verifiable reputation, anchor
 
 The overall development is structured in phases, aiming to incorporate various sponsor technologies:
 
-### MVP: Peer-to-Peer Lending & Reputation on World Chain (Corresponds to Sprints 0-1 in `SPRINT_PLAN.md`)
-**Goal:** Demonstrate a functional P2P lending system with a robust reputation mechanism on a single chain (World Chain focus for the mini-app).
-**Key Technologies/Bounties:** World ID (World Mini App), Core EVM (Flow Killer App or similar), basic Blockscout usage.
+### Phase 1: Core Contract Enhancement & Flow Blockchain Deployment
+**Goal:** Ensure core smart contracts (`UserRegistry.sol`, `P2PLending.sol`, `Reputation.sol`) are robust and support the user flows defined in the latest `uncle` Next.js application (including loan lifecycle management like repayment, extensions, defaults). Deploy and thoroughly test these contracts on the Flow blockchain.
+**Key Technologies/Bounties:** World ID (for user identity), Core EVM (Flow Killer App or similar), Flow Blockchain, Ethers.js for testing.
 
-**Contracts & Features:**
-1.  **`UserRegistry.sol` (or similar for World ID users):**
-    *   Users sign in/register with their World ID. This ensures each on-chain identity is unique, making reputation meaningful.
-2.  **`P2PLending.sol` (Peer-to-Peer Loan Contract):**
+**Contracts & Features (Recap & Enhancements):**
+1.  **`UserRegistry.sol`:**
+    *   Users sign in/register with their World ID.
+    *   Ensure compatibility with frontend identity management.
+2.  **`P2PLending.sol`:**
     *   **Loan Offers/Requests:** Users can create loan offers (lenders) or loan requests (borrowers).
-    *   **Loan Agreements:** Mechanism for borrowers to accept offers or lenders to fund requests, forming a loan agreement.
+    *   **Loan Agreements:** Mechanism for borrowers to accept offers or lenders to fund requests.
     *   **Interest:** Simple interest calculation.
-    *   **Repayment:** Borrowers repay loans by the due date.
-    *   **Default Handling:** Logic for what happens on default.
-3.  **`Reputation.sol` (Reputation & Vouching Contract):**
-    *   **Reputation Scores/Metrics:** Each World ID-linked user has a reputation score/profile.
-        *   Consider on-chain metrics: number of loans taken/given, repayment rates, default history, total value transacted, vouching strength.
-    *   **Reputation Updates:**
-        *   Successful loan repayment improves borrower's reputation (and potentially lender's if it was a "good" loan).
-        *   Defaulting on a loan significantly damages borrower's reputation.
-    *   **Social Vouching:**
-        *   Users can stake tokens to vouch for their friends (borrowers).
-        *   If a vouched borrower defaults, the voucher also loses a portion of their stake AND suffers a reputation hit. This aligns incentives.
-    *   **Loan Extensions (Optional MVP, Core V1):**
-        *   Borrowers can request a loan extension from the lender.
-        *   Lenders can approve/deny.
-        *   Extensions might come with a higher interest rate. Successfully repaying after an extension could have a nuanced impact on reputation (better than defaulting, but not as good as on-time).
-4.  **World Chain Mini-App:**
-    *   Frontend to interact with the contracts: view loan offers/requests, apply/fund loans, manage reputation, see user profiles.
+    *   **Repayment:** Borrowers repay loans.
+    *   **Default Handling:** Logic for defaults.
+    *   **Loan Extensions:** (Crucial for `uncle` app flow)
+        *   Mechanism for borrowers to request extensions.
+        *   Mechanism for lenders to approve/deny extensions.
+        *   Potential adjustments to terms (e.g., interest) upon extension.
+3.  **`Reputation.sol`:**
+    *   **Reputation Metrics:** Based on loan performance (repayments, defaults), vouching.
+    *   **Reputation Updates:** Triggered by loan events (repayment, default, extension outcomes).
+    *   **Social Vouching:** Users stake to vouch; impacts reputation of both voucher and vouchee.
 
-### V1: Cross-Chain Lending with LayerZero (Corresponds to elements of Sprint 3 in `SPRINT_PLAN.md`)
-**Goal:** Enable cross-chain P2P lending, with reputation data read from World Chain.
-**Key Technologies/Bounties:** LayerZero, potentially Flow as a secondary chain.
+**Development & Testing:**
+1.  **Contract Refinement:** Review and update existing Solidity contracts to fully support all user interaction flows present in the `uncle` application. This includes handling loan repayment schedules, requests for payment extensions, and the consequences of such actions on loan status and reputation.
+2.  **Flow Deployment:** Deploy the refined contracts to the Flow blockchain (testnet or local emulator).
+3.  **Ethers.js Testing:** Develop comprehensive test scripts using Ethers.js to interact with the deployed contracts on Flow, verifying all functionalities, especially the new loan management flows.
 
-**Contracts & Features:**
-1.  **Lending Contracts on Flow:** Deploy versions of `P2PLending.sol` (and potentially a minimal `UserRegistry.sol` or World ID integration method for Flow) on the Flow blockchain.
-2.  **LayerZero Integration (`LzCompose`):**
-    *   Use LayerZero's `LzCompose` functionality for dApps on Flow to read reputation data from the `Reputation.sol` contract deployed on World Chain. This is crucial as `LzApp` (omnicahin contracts) might not directly support Flow for `lzReceive`. `LzCompose` allows a contract on one chain to call a contract on another and get a result back.
-    *   When a user on Flow applies for/offers a loan, their reputation from World Chain is fetched to influence terms/trust.
-    *   Potentially, significant events on Flow (like a loan default) could trigger a message back to World Chain via LayerZero to update the global reputation (this part needs careful design for security and atomicity if direct updates are attempted).
+### Phase 2: Frontend Integration & dApp Functionality
+**Goal:** Connect the `uncle` Next.js frontend to the smart contracts deployed on Flow, enabling full dApp functionality, including wallet connection.
+**Key Technologies/Bounties:** Next.js, RainbowKit (for wallet connection), Ethers.js (for frontend-contract interaction).
 
-### V2: Blockscout Analytics Integration & Further Sponsor Tech (Corresponds to elements of Sprint 2-3 in `SPRINT_PLAN.md`)
+**Features & Tasks:**
+1.  **Wallet Integration:** Implement wallet connection using RainbowKit in the `uncle` app.
+2.  **Contract Interaction:** Integrate frontend components with the deployed smart contracts to perform all actions:
+    *   User registration (World ID).
+    *   Creating/viewing/accepting loan offers/requests.
+    *   Managing active loans (viewing status, making repayments, requesting extensions).
+    *   Vouching for others.
+    *   Viewing reputation profiles.
+3.  **Debugging & Testing:** Thoroughly debug the frontend-backend (smart contract) interactions to ensure a seamless user experience.
+
+### Phase 3 (Optional - Stretch Goal): WorldChain & Cross-Chain Reputation via LayerZero
+**Goal:** Explore deploying the reputation system to WorldChain and using LayerZero's `LzCompose` to read this reputation from the Flow-based lending application. This is a stretch goal if time permits after primary objectives are met.
+**Key Technologies/Bounties:** WorldChain, LayerZero (`LzCompose`).
+
+**Features & Tasks (Conditional):**
+1.  **WorldChain Deployment:** Deploy `Reputation.sol` (and potentially `UserRegistry.sol`) to WorldChain.
+2.  **LayerZero `LzCompose` Integration:**
+    *   If proceeding, develop a mechanism on Flow (within `P2PLending.sol` or a new contract) to use `LzCompose` to read a user's reputation from `Reputation.sol` on WorldChain.
+    *   This fetched reputation would then inform loan terms or trust levels on the Flow application.
+
+### V2: Blockscout Analytics Integration & Further Sponsor Tech (Corresponds to elements of Sprint 2-3 in `SPRINT_PLAN.md` - *Currently Lower Priority*)
 **Goal:** Enhance user profiles with on-chain analytics and integrate other relevant sponsor technologies.
 **Key Technologies/Bounties:** Blockscout (SDK/Merits), vLayer/Flare (alternative data), Hedera (AI/HCS), Pyth (oracles), Filecoin (storage), 1inch (swaps).
 
@@ -75,10 +87,12 @@ The overall development is structured in phases, aiming to incorporate various s
 
 ## Tech Stack (Hackathon Focus):
 *   **Smart Contracts:** Solidity
-    *   Primary Chain (for reputation & initial lending): World Chain compatible (e.g., Polygon PoS, Optimism, Arbitrum - whatever World Chain uses or is easiest for mini-app).
-    *   Secondary Chain (for V1): Flow, or other EVM chains as per `SPRINT_PLAN.md` explorations.
-*   **Frontend:** React/Next.js (or other suitable framework for World Chain Mini-App).
+    *   Primary Chain (for lending & initial reputation): Flow Blockchain.
+    *   (Optional Stretch) Reputation Chain: World Chain compatible.
+*   **Frontend:** Next.js (`uncle` app).
+*   **Wallet Connection:** RainbowKit.
+*   **Blockchain Interaction:** Ethers.js.
 *   **Identity:** World ID.
-*   **Cross-Chain:** LayerZero.
-*   **Explorer/Analytics (V2):** Blockscout.
-*   **Other Sponsor Technologies (as per `SPRINT_PLAN.md`):** vLayer, Flare, Hedera, Pyth, Filecoin, 1inch. 
+*   **(Optional Stretch) Cross-Chain:** LayerZero (`LzCompose`).
+*   **Explorer/Analytics (Lower Priority):** Blockscout.
+*   **Other Sponsor Technologies (as per `SPRINT_PLAN.md` - *Currently Lower Priority*):** vLayer, Flare, Hedera, Pyth, Filecoin, 1inch. 
