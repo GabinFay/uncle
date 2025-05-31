@@ -1,1 +1,1 @@
-test_FullLoanCycle_WithCollateral_NoVouching|test_FullLoanCycle_WithSocialVouching
+test_HandleP2PDefault_Success_NoCollateral

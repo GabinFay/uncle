@@ -9,6 +9,7 @@ import "./UserRegistry.sol";
 // import "./SocialVouching.sol"; // Functionality to be in Reputation.sol
 // import "./Treasury.sol"; // No longer used in P2P model
 import "./interfaces/IReputationOApp.sol"; 
+import "./Reputation.sol"; // IMPORT Reputation contract
 
 /**
  * @title P2PLending (Previously LoanContract)
@@ -18,7 +19,8 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
     UserRegistry public userRegistry;
     // SocialVouching public socialVouching; // REMOVED
     // address payable public treasuryAddress; // REMOVED - P2P model
-    IReputationOApp public reputationOApp; // For now, will interact with a future Reputation.sol via this interface or direct calls
+    Reputation public reputationContract; // CHANGED from reputationOApp and socialVouching concept
+    IReputationOApp public reputationOApp; // To be reviewed if still needed alongside direct Reputation.sol calls
 
     struct LoanVoucherDetail { // This might be part of Reputation.sol or a shared struct
         address voucherAddress;
@@ -111,6 +113,7 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
     mapping(address => bytes32[]) public userLoanAgreementsAsBorrower; // borrower => agreement IDs
     uint256 public loanAgreementCounter;
 
+    uint256 public constant BASIS_POINTS = 10000;
 
     // --- Events ---
     // Old events to be revised for P2P
@@ -142,19 +145,20 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
     // }
 
     constructor(
-        address userRegistryAddress,
-        address socialVouchingAddress, // Will become reputationContractAddress
-        address payable treasuryAddressForOldLogic, // No longer directly used for P2P core
+        address _userRegistryAddress,
+        address _reputationContractAddress,
+        address payable _treasuryAddressForOldLogic, // Marked as unused
         address initialReputationOAppAddress 
     ) Ownable(msg.sender) {
-        require(userRegistryAddress != address(0), "Invalid UserRegistry address");
-        // require(socialVouchingAddress != address(0), "Invalid SocialVouching address"); // Temporarily allow 0 for refactor
+        require(_userRegistryAddress != address(0), "Invalid UserRegistry address");
+        require(_reputationContractAddress != address(0), "Invalid Reputation contract address"); // ADDED check
         // require(initialTreasuryAddress != address(0), "Invalid Treasury address"); // No longer used
-        require(initialReputationOAppAddress != address(0), "Invalid ReputationOApp address"); 
-        userRegistry = UserRegistry(userRegistryAddress);
-        // socialVouching = SocialVouching(socialVouchingAddress); // REMOVED
-        // treasuryAddress = initialTreasuryAddress; // REMOVED
-        reputationOApp = IReputationOApp(initialReputationOAppAddress); 
+        // require(initialReputationOAppAddress != address(0), "Invalid ReputationOApp address"); // OApp is secondary now
+        userRegistry = UserRegistry(_userRegistryAddress);
+        reputationContract = Reputation(_reputationContractAddress); // SETTING reputationContract
+        if (initialReputationOAppAddress != address(0)) { // Optional OApp
+            reputationOApp = IReputationOApp(initialReputationOAppAddress);
+        }
         // The socialVouchingAddress param will be repurposed for the Reputation.sol contract later
     }
 
@@ -211,13 +215,18 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
     */
 
     // --- Admin Functions (mostly for setters, Ownable ensures only owner) ---
+    function setReputationContractAddress(address _newReputationContractAddress) external onlyOwner {
+        require(_newReputationContractAddress != address(0), "Invalid Reputation contract address");
+        reputationContract = Reputation(_newReputationContractAddress);
+    }
+    
     function setReputationOAppAddress(address newReputationOAppAddress) external onlyOwner {
-        require(newReputationOAppAddress != address(0), "Invalid ReputationOApp address");
+        // Allow setting to address(0) if OApp is to be disabled
         reputationOApp = IReputationOApp(newReputationOAppAddress);
     }
     
     // The setPythAddress function is removed/reverted as Pyth is not used
-    function setPythAddress(address newPythAddress) external onlyOwner {
+    function setPythAddress(address /* newPythAddress */) external onlyOwner {
         revert("Pyth integration removed"); 
     }
 
@@ -365,10 +374,8 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
         userLoanAgreementsAsBorrower[msg.sender].push(agreementId);
 
         emit LoanAgreementFormed(agreementId, offer.lender, msg.sender, offer.offerAmount, offer.loanToken);
-        // Placeholder: Call Reputation.sol to record loan initiation
-        // if (address(reputationOApp) != address(0)) { 
-        // reputationOApp.updateOnLoanAgreement(agreementId, offer.lender, msg.sender, offer.offerAmount);
-        // }
+        // Call Reputation.sol - details to be added if loan formation affects reputation immediately
+        // For now, reputation is primarily affected by repayment/default events.
 
         return agreementId;
     }
@@ -424,10 +431,7 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
         userLoanAgreementsAsBorrower[request.borrower].push(agreementId);
 
         emit LoanAgreementFormed(agreementId, msg.sender, request.borrower, request.requestAmount, request.loanToken);
-        // Placeholder: Call Reputation.sol to record loan initiation
-        // if (address(reputationOApp) != address(0)) { 
-        //     reputationOApp.updateOnLoanAgreement(agreementId, msg.sender, request.borrower, request.requestAmount);
-        // }
+        // Call Reputation.sol - similar to acceptLoanOffer
 
         return agreementId;
     }
@@ -464,16 +468,117 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
         return userLoanAgreementsAsBorrower[user];
     }
 
+    function _calculateInterest(
+        uint256 principalAmount,
+        uint256 interestRateBps,
+        uint256 /* durationSeconds */, // Not directly used in this simple model
+        uint256 /* loanTermSeconds */  // Not directly used if rate is flat for the term
+    ) internal pure returns (uint256 interest) {
+        if (principalAmount == 0 || interestRateBps == 0) {
+            return 0;
+        }
+        return (principalAmount * interestRateBps) / BASIS_POINTS;
+    }
+
+    function _calculateTotalDue(LoanAgreement storage agreement) internal view returns (uint256 totalDue) {
+        uint256 interest = _calculateInterest(
+            agreement.principalAmount, 
+            agreement.interestRate, 
+            agreement.duration, // Pass agreement duration
+            agreement.duration  // Rate is for this loan term
+        );
+        return agreement.principalAmount + interest;
+    }
+
+    function repayP2PLoan(bytes32 agreementId, uint256 paymentAmount) external nonReentrant {
+        LoanAgreement storage agreement = loanAgreements[agreementId];
+        require(agreement.borrower == msg.sender, "Only borrower can repay");
+        require(agreement.status == LoanStatus.Active, "Loan not active");
+        require(paymentAmount > 0, "Payment amount must be positive");
+
+        uint256 totalDue = _calculateTotalDue(agreement);
+        uint256 remainingDue = totalDue - agreement.amountPaid;
+        require(paymentAmount <= remainingDue, "Payment exceeds remaining due"); // Prevent overpayment complexity for now
+
+        // Borrower must have approved this contract to transfer paymentAmount of loanToken
+        IERC20(agreement.loanToken).transferFrom(msg.sender, agreement.lender, paymentAmount);
+
+        agreement.amountPaid += paymentAmount;
+        emit LoanRepaymentMade(agreementId, paymentAmount, agreement.amountPaid);
+
+        if (agreement.amountPaid >= totalDue) {
+            agreement.status = LoanStatus.Repaid;
+            emit LoanAgreementRepaid(agreementId);
+
+            // Return collateral if any
+            if (agreement.collateralAmount > 0 && agreement.collateralToken != address(0)) {
+                IERC20(agreement.collateralToken).transfer(agreement.borrower, agreement.collateralAmount);
+            }
+
+            // Call Reputation.sol to update reputation for borrower and lender
+            if (address(reputationContract) != address(0)) { 
+                reputationContract.updateReputationOnLoanRepayment(agreement.borrower, agreement.lender, agreement.principalAmount);
+            }
+        }
+    }
+
+    function handleP2PDefault(bytes32 agreementId) external nonReentrant {
+        LoanAgreement storage agreement = loanAgreements[agreementId];
+        require(agreement.lender != address(0), "Agreement does not exist"); // Check agreement exists
+        require(agreement.status == LoanStatus.Active, "Loan not active for default");
+        require(block.timestamp > agreement.dueDate, "Loan not yet overdue");
+
+        uint256 totalDue = _calculateTotalDue(agreement);
+        require(agreement.amountPaid < totalDue, "Loan already fully paid, cannot default");
+
+        agreement.status = LoanStatus.Defaulted;
+        emit LoanAgreementDefaulted(agreementId);
+
+        // Transfer collateral, if any, to the lender
+        if (agreement.collateralAmount > 0 && agreement.collateralToken != address(0)) {
+            IERC20(agreement.collateralToken).transfer(agreement.lender, agreement.collateralAmount);
+        }
+
+        // Call Reputation.sol to update reputation and potentially slash vouches
+        if (address(reputationContract) != address(0)) { 
+            // First, update the borrower's direct reputation for the default
+            reputationContract.updateReputationOnLoanDefault(
+                agreement.borrower, 
+                agreement.lender, 
+                agreement.principalAmount,
+                new bytes32[](0) // Pass empty array explicitly 
+            );
+
+            // Now, handle slashing of vouches for the defaulting borrower
+            Reputation.Vouch[] memory activeVouches = reputationContract.getActiveVouchesForBorrower(agreement.borrower);
+            uint256 tenPercentSlashBasis = 1000; // 10.00%
+
+            for (uint i = 0; i < activeVouches.length; i++) {
+                Reputation.Vouch memory currentVouch = activeVouches[i];
+                if (currentVouch.isActive && currentVouch.stakedAmount > 0) { // Double check, though getActive should ensure this
+                    uint256 slashAmount = (currentVouch.stakedAmount * tenPercentSlashBasis) / BASIS_POINTS; // 10% of current stake
+                    if (slashAmount == 0 && currentVouch.stakedAmount > 0) { // Ensure at least 1 unit is slashed if stake > 0 and 10% is < 1
+                        slashAmount = 1; 
+                    }
+                    if (slashAmount > currentVouch.stakedAmount) { // Cap at staked amount
+                        slashAmount = currentVouch.stakedAmount;
+                    }
+
+                    if (slashAmount > 0) {
+                        // P2PLending tells Reputation to slash this specific vouch
+                        reputationContract.slashVouchAndReputation(
+                            currentVouch.voucher,
+                            agreement.borrower,
+                            slashAmount,
+                            agreement.lender // Lender of the defaulted loan receives the slashed funds
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // To be implemented based on PRD.md:
-    // repayP2PLoan(...)
-    // handleP2PDefault(...)
     // requestP2PLoanExtension(...)
-    // approveP2PLoanExtension(...)
-    // getLoanOfferDetails(...)
-    // getLoanRequestDetails(...)
-    // getLoanAgreementDetails(...)
-    // getUserLoanOffers(...)
-    // getUserLoanRequests(...)
-    // getUserLoanAgreements(...)
 
 } 
