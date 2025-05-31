@@ -7,12 +7,14 @@ import "../src/Reputation.sol";
 import "../src/P2PLending.sol"; // For access to P2PLending contract if needed for setup
 import "./mocks/MockERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "./mocks/MockWorldIdRouter.sol"; // Import mock router
 
 contract ReputationTest is Test {
     UserRegistry public userRegistry;
     Reputation public reputation;
     P2PLending public p2pLendingInstanceForMocking; // Renamed for clarity
     MockERC20 public mockDai;
+    MockWorldIdRouter public mockWorldIdRouter; // Mock router instance
 
     address owner;
     address user1 = vm.addr(1); // Will act as borrower, lender, voucher
@@ -25,10 +27,20 @@ contract ReputationTest is Test {
     uint256 user2Nullifier = 88888;
     uint256 user3Nullifier = 99999;
 
+    // Dummy proof data for tests
+    uint256 private constant DUMMY_ROOT = 987654323; // Different again for clarity
+    uint256[8] private DUMMY_PROOF; // Assign in setUp
+
+    // App and action IDs for testing
+    string testAppIdString = "test-app-reputation";
+    string testActionIdRegisterUserString = "test-register-reputation";
+
     function setUp() public {
+        DUMMY_PROOF = [uint256(1), 3, 5, 7, 9, 2, 4, 6]; // Assign DUMMY_PROOF
         owner = address(this);
 
-        userRegistry = new UserRegistry();
+        mockWorldIdRouter = new MockWorldIdRouter();
+        userRegistry = new UserRegistry(address(mockWorldIdRouter), testAppIdString, testActionIdRegisterUserString);
         reputation = new Reputation(address(userRegistry));
 
         // Deploy a P2PLending instance. Its address will be used as the mock caller.
@@ -45,10 +57,11 @@ contract ReputationTest is Test {
         vm.prank(owner);
         reputation.setP2PLendingContractAddress(actualP2PLendingAddress);
 
-        // Register users
-        vm.prank(owner); userRegistry.registerUser(user1, user1Nullifier);
-        vm.prank(owner); userRegistry.registerUser(user2, user2Nullifier);
-        vm.prank(owner); userRegistry.registerUser(user3, user3Nullifier);
+        // Register users (assuming proof verification will pass)
+        mockWorldIdRouter.setShouldProofSucceed(true);
+        vm.prank(owner); userRegistry.registerUser(user1, DUMMY_ROOT, user1Nullifier, DUMMY_PROOF);
+        vm.prank(owner); userRegistry.registerUser(user2, DUMMY_ROOT, user2Nullifier, DUMMY_PROOF);
+        vm.prank(owner); userRegistry.registerUser(user3, DUMMY_ROOT, user3Nullifier, DUMMY_PROOF);
 
         mockDai = new MockERC20("Mock DAI", "mDAI", 18);
         mockDai.mint(user1, 1000 * 1e18);

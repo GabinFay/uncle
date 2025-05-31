@@ -7,6 +7,7 @@ import "../src/P2PLending.sol";
 import "../src/Reputation.sol";
 import "./mocks/MockERC20.sol";
 import "openzeppelin-contracts/contracts/access/Ownable.sol";
+import "./mocks/MockWorldIdRouter.sol";
 
 contract P2PLendingTest is Test {
     UserRegistry public userRegistry;
@@ -14,6 +15,7 @@ contract P2PLendingTest is Test {
     Reputation public reputation;
     MockERC20 public mockDai;
     MockERC20 public mockUsdc;
+    MockWorldIdRouter public mockWorldIdRouter;
 
     address owner;
     address borrower = vm.addr(1);
@@ -25,6 +27,12 @@ contract P2PLendingTest is Test {
     uint256 borrowerNullifier = 44444;
     uint256 lenderNullifier = 55555;
     uint256 voucherNullifier = 66666;
+
+    uint256 private constant DUMMY_ROOT = 987654322;
+    uint256[8] private DUMMY_PROOF;
+
+    string testAppIdString = "test-app-p2p";
+    string testActionIdRegisterUserString = "test-register-p2p";
 
     uint256 constant ONE_DAY_SECONDS = 1 days;
     uint256 constant DEFAULT_INTEREST_RATE_P2P = 500; // 5.00%
@@ -42,8 +50,11 @@ contract P2PLendingTest is Test {
     event ReputationUpdated(address indexed user, int256 newScore, string reason);
 
     function setUp() public {
+        DUMMY_PROOF = [uint256(8), 7, 6, 5, 4, 3, 2, 1];
         owner = address(this);
-        userRegistry = new UserRegistry();
+
+        mockWorldIdRouter = new MockWorldIdRouter();
+        userRegistry = new UserRegistry(address(mockWorldIdRouter), testAppIdString, testActionIdRegisterUserString);
         reputation = new Reputation(address(userRegistry));
         
         p2pLending = new P2PLending(
@@ -56,14 +67,16 @@ contract P2PLendingTest is Test {
         vm.prank(owner);
         reputation.setP2PLendingContractAddress(address(p2pLending));
 
-        vm.prank(owner); userRegistry.registerUser(borrower, borrowerNullifier);
-        vm.prank(owner); userRegistry.registerUser(lender, lenderNullifier);
-        vm.prank(owner); userRegistry.registerUser(voucher1, voucherNullifier);
+        mockWorldIdRouter.setShouldProofSucceed(true);
+        vm.prank(owner); userRegistry.registerUser(borrower, DUMMY_ROOT, borrowerNullifier, DUMMY_PROOF);
+        vm.prank(owner); userRegistry.registerUser(lender, DUMMY_ROOT, lenderNullifier, DUMMY_PROOF);
+        vm.prank(owner); userRegistry.registerUser(voucher1, DUMMY_ROOT, voucherNullifier, DUMMY_PROOF);
+        
         mockDai = new MockERC20("Mock DAI", "mDAI", 18);
-        mockUsdc = new MockERC20("Mock USDC", "mUSDC", 6);
         mockDai.mint(borrower, 2000 * 1e18);
         mockDai.mint(lender, 10000 * 1e18);
         mockDai.mint(voucher1, 1000 * 1e18);
+        mockUsdc = new MockERC20("Mock USDC", "mUSDC", 6);
         mockUsdc.mint(borrower, 500 * 1e6);
         mockUsdc.mint(lender, 500 * 1e6);
     }

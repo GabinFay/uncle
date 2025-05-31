@@ -9,6 +9,7 @@ import {P2PLending} from "../src/P2PLending.sol"; // UPDATED from LoanContract.s
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Reputation} from "../src/Reputation.sol"; // ADDED
+import {MockWorldIdRouter} from "./mocks/MockWorldIdRouter.sol"; // Import mock router
 
 // Re-declare events from LoanContract for type-safe emit checks
 // Will need to update these for P2PLending events
@@ -30,6 +31,7 @@ contract IntegrationTest is Test {
     MockERC20 mockDAI; 
     MockERC20 mockUSDC; 
     Reputation reputation; // ADDED
+    MockWorldIdRouter mockWorldIdRouter; // Mock router instance
 
     address owner = address(this); 
     address user1 = vm.addr(1);
@@ -40,11 +42,23 @@ contract IntegrationTest is Test {
     uint256 constant INITIAL_MINT_AMOUNT = 1_000_000 * 1e18; // For DAI (18 decimals)
     uint256 constant USER1_NULLIFIER = 11111; // Changed to uint256
     uint256 constant USER2_NULLIFIER = 22222; // Changed to uint256
+    uint256 constant VOUCHER_NULLIFIER = 33333; // Added for voucher
     address[] emptyVoucherAddresses; // For applyForLoan calls not testing vouching
 
+    // Dummy proof data for tests
+    uint256 private constant DUMMY_ROOT = 987654321;
+    uint256[8] private DUMMY_PROOF; // Assign in setUp
+
+    // App and action IDs for testing
+    string testAppIdString = "test-app-integration";
+    string testActionIdRegisterUserString = "test-register-integration";
+
     function setUp() public {
+        DUMMY_PROOF = [uint256(1), 2, 3, 4, 5, 6, 7, 8]; // Assign DUMMY_PROOF
+
         // Deploy contracts
-        userRegistry = new UserRegistry();
+        mockWorldIdRouter = new MockWorldIdRouter();
+        userRegistry = new UserRegistry(address(mockWorldIdRouter), testAppIdString, testActionIdRegisterUserString);
         reputation = new Reputation(address(userRegistry)); // Deploy Reputation
         // socialVouching = new SocialVouching(address(userRegistry)); // REMOVED
         // treasury = new Treasury(owner); // REMOVED
@@ -75,9 +89,10 @@ contract IntegrationTest is Test {
         // loanContract.setPlatformFeePercentage(100); // 1% fee (100 / 10000)
         vm.stopPrank();
 
-        // Register users
-        vm.prank(owner); userRegistry.registerUser(user1, USER1_NULLIFIER); // Changed to registerUser
-        vm.prank(owner); userRegistry.registerUser(user2, USER2_NULLIFIER); // Changed to registerUser
+        // Register users (assuming proof verification will pass)
+        mockWorldIdRouter.setShouldProofSucceed(true);
+        vm.prank(owner); userRegistry.registerUser(user1, DUMMY_ROOT, USER1_NULLIFIER, DUMMY_PROOF);
+        vm.prank(owner); userRegistry.registerUser(user2, DUMMY_ROOT, USER2_NULLIFIER, DUMMY_PROOF);
 
         // Mint tokens to users and treasury
         mockDAI.mint(user1, INITIAL_MINT_AMOUNT);
@@ -130,12 +145,13 @@ contract IntegrationTest is Test {
 
     function test_P2P_FullCycle_Request_Fund_Default_WithCollateral_WithVouch() public {
         // 1. User3 (voucher) vouches for User1 (borrower)
-        address voucher = vm.addr(4); // New address for voucher to avoid confusion
-        uint256 voucherNullifier = 33333; // Changed to uint256
-        vm.prank(owner); userRegistry.registerUser(voucher, voucherNullifier); // Changed to registerUser
-        mockDAI.mint(voucher, 200 * 1e18); // Mint DAI to voucher
+        address voucher = vm.addr(4); 
+        // uint256 voucherNullifier = 33333; // Already defined as VOUCHER_NULLIFIER
+        mockWorldIdRouter.setShouldProofSucceed(true); // Ensure registration works
+        vm.prank(owner); userRegistry.registerUser(voucher, DUMMY_ROOT, VOUCHER_NULLIFIER, DUMMY_PROOF);
+        mockDAI.mint(voucher, 200 * 1e18); 
 
-        uint256 vouchAmount = 50 * 1e18; // 50 mDAI
+        uint256 vouchAmount = 50 * 1e18; 
         vm.startPrank(voucher); 
         mockDAI.approve(address(reputation), vouchAmount);
         reputation.addVouch(user1 /*borrowerToVouchFor*/, vouchAmount, address(mockDAI));
