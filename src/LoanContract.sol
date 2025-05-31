@@ -2,14 +2,15 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+// import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol"; // No longer needed for Pyth
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./UserRegistry.sol";
 import "./SocialVouching.sol";
-import "./Treasury.sol"; // Import Treasury to use its type
-import "./interfaces/IPyth.sol"; // Import IPyth
-import "./interfaces/IReputationOApp.sol"; // Import IReputationOApp
-// import "./interfaces/IReputationOApp.sol"; // Placeholder for Reputation integration
+import "./Treasury.sol"; 
+// import "./interfaces/IPyth.sol"; // No longer needed
+import "./interfaces/IReputationOApp.sol"; 
+// import "forge-std/console.sol"; // For debugging, removed
 
 /**
  * @title LoanContract
@@ -18,10 +19,13 @@ import "./interfaces/IReputationOApp.sol"; // Import IReputationOApp
 contract LoanContract is Ownable, ReentrancyGuard {
     UserRegistry public userRegistry;
     SocialVouching public socialVouching;
-    address payable public treasuryAddress; // Changed to address payable
-    IPyth public pyth; // Pyth address
-    IReputationOApp public reputationOApp; // Reputation OApp address
-    // IReputationOApp public reputationOApp; // Placeholder
+    address payable public treasuryAddress; 
+    // IPyth public pyth; // Pyth address - REMOVED
+    IReputationOApp public reputationOApp; 
+
+    // mapping(address => bytes32) public tokenToPythPriceId; // REMOVED
+    // uint256 public constant MAX_LTV = 8000; // REMOVED
+    // uint256 public constant PRICE_PRECISION = 1e8; // REMOVED
 
     struct LoanVoucherDetail {
         address voucherAddress;
@@ -76,21 +80,19 @@ contract LoanContract is Ownable, ReentrancyGuard {
         address userRegistryAddress,
         address socialVouchingAddress,
         address payable initialTreasuryAddress,
-        address initialPythAddress,
-        address initialReputationOAppAddress // Added initialReputationOAppAddress
-        // address reputationOAppAddress, // Placeholder
+        // address initialPythAddress, // REMOVED
+        address initialReputationOAppAddress 
     ) Ownable(msg.sender) {
         require(userRegistryAddress != address(0), "Invalid UserRegistry address");
         require(socialVouchingAddress != address(0), "Invalid SocialVouching address");
         require(initialTreasuryAddress != address(0), "Invalid Treasury address");
-        require(initialPythAddress != address(0), "Invalid Pyth address");
-        require(initialReputationOAppAddress != address(0), "Invalid ReputationOApp address"); // Added check
+        // require(initialPythAddress != address(0), "Invalid Pyth address"); // REMOVED
+        require(initialReputationOAppAddress != address(0), "Invalid ReputationOApp address"); 
         userRegistry = UserRegistry(userRegistryAddress);
         socialVouching = SocialVouching(socialVouchingAddress);
         treasuryAddress = initialTreasuryAddress;
-        pyth = IPyth(initialPythAddress); // Set Pyth address
-        reputationOApp = IReputationOApp(initialReputationOAppAddress); // Set ReputationOApp address
-        // reputationOApp = IReputationOApp(reputationOAppAddress); // Placeholder
+        // pyth = IPyth(initialPythAddress); // REMOVED
+        reputationOApp = IReputationOApp(initialReputationOAppAddress); 
     }
 
     function applyForLoan(
@@ -136,17 +138,25 @@ contract LoanContract is Ownable, ReentrancyGuard {
             finalActiveLoanVouches[i] = activeLoanVouches[i];
         }
 
-        // Placeholder: LTV Check with Pyth if collateral is provided
+        // Placeholder: LTV Check with Pyth if collateral is provided - REMOVED
+        // if (collateralAmount_ > 0 && collateralToken_ != address(0)) {
+        //     require(tokenToPythPriceId[collateralToken_] != bytes32(0), "Collateral token price ID not set");
+        //     require(tokenToPythPriceId[loanToken_] != bytes32(0), "Loan token price ID not set");
+
+        //     uint256 collateralValue = _getOraclePriceInUSD(collateralToken_, collateralAmount_);
+        //     uint256 loanValue = _getOraclePriceInUSD(loanToken_, principalAmount_);
+
+        //     require(loanValue > 0, "Loan value must be positive"); 
+        //     require(collateralValue > 0, "Collateral value must be positive");
+            
+        //     uint256 currentLTV = (loanValue * 10000) / collateralValue;
+        //     require(currentLTV <= MAX_LTV, "LTV too high");
+
+        //     IERC20(collateralToken_).transferFrom(msg.sender, address(this), collateralAmount_);
+        // }
+
+        // Original simple collateral transfer (if any)
         if (collateralAmount_ > 0 && collateralToken_ != address(0)) {
-            // bytes32 priceId = getPriceIdForToken(collateralToken_); // Helper to map token to Pyth price ID
-            // IPyth.Price memory collateralPrice = pyth.getPrice(priceId);
-            // uint256 collateralValue = (collateralAmount_ * uint256(collateralPrice.price)) / (10**uint256(-collateralPrice.expo));
-            
-            // bytes32 loanTokenPriceId = getPriceIdForToken(loanToken_); 
-            // IPyth.Price memory loanTokenPrice = pyth.getPrice(loanTokenPriceId);
-            // uint256 loanValue = (principalAmount_ * uint256(loanTokenPrice.price)) / (10**uint256(-loanTokenPrice.expo));
-            
-            // require(calculateLTV(loanValue, collateralValue) <= MAX_LTV, "LTV too high");
             IERC20(collateralToken_).transferFrom(msg.sender, address(this), collateralAmount_);
         }
 
@@ -347,14 +357,23 @@ contract LoanContract is Ownable, ReentrancyGuard {
     }
 
     function setPythAddress(address newPythAddress) external onlyOwner {
-        require(newPythAddress != address(0), "Invalid Pyth address");
-        pyth = IPyth(newPythAddress);
+        // require(newPythAddress != address(0), "Invalid Pyth address"); // REMOVED
+        // pyth = IPyth(newPythAddress); // REMOVED
+        revert("Pyth integration removed"); // Indicate function is no longer active
     }
 
     function setReputationOAppAddress(address newReputationOAppAddress) external onlyOwner {
         require(newReputationOAppAddress != address(0), "Invalid ReputationOApp address");
         reputationOApp = IReputationOApp(newReputationOAppAddress);
     }
+
+    // function setTokenPythPriceId(address tokenAddress, bytes32 priceId) external onlyOwner { // REMOVED
+    //     revert("Pyth integration removed");
+    // }
+
+    // function _getOraclePriceInUSD(address tokenAddress, uint256 amount) internal view returns (uint256 value) { // REMOVED
+    //     revert("Pyth integration removed");
+    // }
 
     // Placeholder for Pyth/ReputationApp address setters if needed
     // function setReputationOAppAddress(address newReputationOAppAddress) external onlyOwner { ... }

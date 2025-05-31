@@ -27,7 +27,6 @@ contract IntegrationTest is Test {
     address user1 = vm.addr(1);
     address voucher1 = vm.addr(2);
     address platformWallet = vm.addr(3); // For platform fees (not currently used by LoanContract)
-    address pythIntegrationMockAddress = vm.addr(11); // For Pyth in integration tests
     address reputationOAppIntegrationMockAddress = vm.addr(12); // For Reputation OApp
 
     uint256 constant INITIAL_MINT_AMOUNT = 1_000_000 * 1e18; // For DAI (18 decimals)
@@ -44,7 +43,6 @@ contract IntegrationTest is Test {
             address(userRegistry),
             address(socialVouching),
             payable(address(treasury)),
-            pythIntegrationMockAddress, // Pass Pyth mock address
             reputationOAppIntegrationMockAddress // Pass ReputationOApp mock address
         );
 

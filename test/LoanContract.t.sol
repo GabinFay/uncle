@@ -21,7 +21,7 @@ contract LoanContractTest is Test {
     address borrower = vm.addr(1);
     address platformWallet = vm.addr(2); // For tests assuming a platform fee mechanism (currently not in LoanContract)
     address voucher1 = vm.addr(3);
-    address pythMockAddress = vm.addr(7); // New address for mock Pyth contract
+    address pythPlaceholderAddress = vm.addr(7); // Placeholder if constructor still needs it
     address reputationOAppMockAddress = vm.addr(8); // New address for mock Reputation OApp
 
     bytes32 borrowerNullifier = keccak256(abi.encodePacked("borrowerN"));
@@ -51,17 +51,15 @@ contract LoanContractTest is Test {
             address(userRegistry),
             address(socialVouching),
             payable(address(treasury)),
-            pythMockAddress, // Pass Pyth mock address
-            reputationOAppMockAddress // Pass ReputationOApp mock address
+            reputationOAppMockAddress
         );
         
         vm.prank(owner);
         treasury.setLoanContractAddress(address(loanContract));
-        socialVouching.setLoanContractAddress(address(loanContract)); // Allow LoanContract to call restricted functions
-        // Removed platform wallet/fee setup as they are not in this LoanContract.sol version
+        socialVouching.setLoanContractAddress(address(loanContract)); 
 
         mockDai = new MockERC20("Mock DAI", "mDAI", 18);
-        mockUsdc = new MockERC20("Mock USDC", "mUSDC", 18);
+        mockUsdc = new MockERC20("Mock USDC", "mUSDC", 6);
 
         vm.prank(owner); userRegistry.registerOrUpdateUser(borrower, borrowerNullifier);
         vm.prank(owner); userRegistry.registerOrUpdateUser(voucher1, voucherNullifier);
@@ -495,23 +493,6 @@ contract LoanContractTest is Test {
         vm.startPrank(owner);
         vm.expectRevert(bytes("Loan not in defaulted state for liquidation"));
         loanContract.liquidateLoan(loanId);
-        vm.stopPrank();
-    }
-
-    // --- Pyth Address Setter Test ---
-    function test_SetPythAddress_Success() public {
-        address newPyth = vm.addr(8);
-        vm.prank(owner);
-        loanContract.setPythAddress(newPyth);
-        vm.stopPrank();
-        assertEq(address(loanContract.pyth()), newPyth, "Pyth address not set correctly");
-    }
-
-    function test_RevertIf_SetPythAddress_NotOwner() public {
-        address newPyth = vm.addr(8);
-        vm.startPrank(borrower);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, borrower));
-        loanContract.setPythAddress(newPyth);
         vm.stopPrank();
     }
 
