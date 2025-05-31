@@ -3,151 +3,102 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "../src/UserRegistry.sol";
-import "openzeppelin-contracts/contracts/access/Ownable.sol"; // Import Ownable to access its error
 
 contract UserRegistryTest is Test {
     UserRegistry public userRegistry;
-    address owner = address(this); // Test contract itself can be the owner for simplicity
     address user1 = address(0x1);
     address user2 = address(0x2);
-    bytes32 worldIdNullifier1 = keccak256(abi.encodePacked("nullifier1"));
-    bytes32 worldIdNullifier2 = keccak256(abi.encodePacked("nullifier2"));
+    uint256 worldIdNullifier1 = 12345; // Using uint256 as in UserRegistry.sol
+    uint256 worldIdNullifier2 = 67890; // Using uint256
 
     function setUp() public {
-        // userRegistry = new UserRegistry(owner);
-        // For Ownable contracts, the deployer (this test contract) is automatically the owner.
-        userRegistry = new UserRegistry(); 
+        userRegistry = new UserRegistry();
     }
 
     function testRegisterNewUser() public {
-        vm.prank(owner);
-        userRegistry.registerOrUpdateUser(user1, worldIdNullifier1);
-        UserRegistry.UserProfile memory profile = userRegistry.getUserProfile(user1);
-        assertTrue(profile.isWorldIdVerified, "User should be World ID verified");
-        assertEq(profile.worldIdNullifierHash, worldIdNullifier1, "World ID nullifier hash mismatch");
-        assertEq(userRegistry.worldIdNullifierToAddress(worldIdNullifier1), user1, "Nullifier to address mapping mismatch");
+        userRegistry.registerUser(user1, worldIdNullifier1);
+        assertTrue(userRegistry.isUserRegistered(user1), "User should be registered");
+        assertEq(userRegistry.getWorldIdNullifier(user1), worldIdNullifier1, "World ID nullifier mismatch for user1");
+        assertEq(userRegistry.getAddressByNullifier(worldIdNullifier1), user1, "Nullifier to address mapping mismatch for nullifier1");
+        assertTrue(userRegistry.isNullifierRegistered(worldIdNullifier1), "Nullifier should be marked as registered");
     }
 
     function test_RevertIf_RegisterWithZeroAddress() public {
-        vm.prank(owner);
-        vm.expectRevert(bytes("UserRegistry: Invalid user address"));
-        userRegistry.registerOrUpdateUser(address(0), worldIdNullifier1);
+        vm.expectRevert("UserRegistry: Cannot register zero address");
+        userRegistry.registerUser(address(0), worldIdNullifier1);
     }
 
     function test_RevertIf_RegisterWithZeroNullifier() public {
-        vm.prank(owner);
-        vm.expectRevert(bytes("UserRegistry: Invalid World ID nullifier hash"));
-        userRegistry.registerOrUpdateUser(user1, bytes32(0));
+        vm.expectRevert("UserRegistry: World ID nullifier cannot be zero");
+        userRegistry.registerUser(user1, 0);
     }
 
     function test_RevertIf_RegisterExistingNullifierToDifferentAddress() public {
-        vm.prank(owner);
-        userRegistry.registerOrUpdateUser(user1, worldIdNullifier1);
-        vm.expectRevert(bytes("UserRegistry: World ID already registered to another address"));
-        userRegistry.registerOrUpdateUser(user2, worldIdNullifier1);
+        userRegistry.registerUser(user1, worldIdNullifier1);
+        vm.expectRevert("UserRegistry: World ID already registered");
+        userRegistry.registerUser(user2, worldIdNullifier1); // Attempt to register same nullifier to user2
     }
 
     function test_RevertIf_RegisterExistingAddressToDifferentNullifier() public {
-        vm.prank(owner);
-        userRegistry.registerOrUpdateUser(user1, worldIdNullifier1);
-        vm.expectRevert(bytes("UserRegistry: Address already registered with a different World ID"));
-        userRegistry.registerOrUpdateUser(user1, worldIdNullifier2);
+        userRegistry.registerUser(user1, worldIdNullifier1);
+        vm.expectRevert("UserRegistry: Address already has a World ID registered");
+        userRegistry.registerUser(user1, worldIdNullifier2); // Attempt to register user1 with a new nullifier
+    }
+
+    function testRegisterMultipleUsers() public {
+        userRegistry.registerUser(user1, worldIdNullifier1);
+        userRegistry.registerUser(user2, worldIdNullifier2);
+
+        assertTrue(userRegistry.isUserRegistered(user1), "User1 should be registered");
+        assertEq(userRegistry.getWorldIdNullifier(user1), worldIdNullifier1, "Nullifier for user1 mismatch");
+        
+        assertTrue(userRegistry.isUserRegistered(user2), "User2 should be registered");
+        assertEq(userRegistry.getWorldIdNullifier(user2), worldIdNullifier2, "Nullifier for user2 mismatch");
+
+        assertEq(userRegistry.getAddressByNullifier(worldIdNullifier1), user1, "Address for nullifier1 mismatch");
+        assertEq(userRegistry.getAddressByNullifier(worldIdNullifier2), user2, "Address for nullifier2 mismatch");
     }
     
-    function testUpdateUserWithSameNullifier() public {
-        //This should effectively re-register/confirm the user
-        vm.prank(owner);
-        userRegistry.registerOrUpdateUser(user1, worldIdNullifier1);
-        UserRegistry.UserProfile memory profileBefore = userRegistry.getUserProfile(user1);
-        assertTrue(profileBefore.isWorldIdVerified, "User should be initially verified");
-
-        // e.g. if some profile data changed and backend re-confirms, it calls again
-        vm.prank(owner);
-        userRegistry.registerOrUpdateUser(user1, worldIdNullifier1); 
-        UserRegistry.UserProfile memory profileAfter = userRegistry.getUserProfile(user1);
-        assertTrue(profileAfter.isWorldIdVerified, "User should remain verified");
-        assertEq(profileAfter.worldIdNullifierHash, worldIdNullifier1, "Nullifier should remain the same");
+    function testIsUserRegistered_NotRegistered() public {
+        assertFalse(userRegistry.isUserRegistered(user1), "User should not be registered initially");
     }
 
-    function testIsUserWorldIdVerified() public {
-        assertFalse(userRegistry.isUserWorldIdVerified(user1), "User should not be verified initially");
-        vm.prank(owner);
-        userRegistry.registerOrUpdateUser(user1, worldIdNullifier1);
-        assertTrue(userRegistry.isUserWorldIdVerified(user1), "User should be verified after registration");
+    function testGetWorldIdNullifier_NotRegistered() public {
+        assertEq(userRegistry.getWorldIdNullifier(user1), 0, "Should return 0 for non-registered user");
     }
 
-    function testGetUserProfileTest() public {
-        vm.prank(owner);
-        userRegistry.registerOrUpdateUser(user1, worldIdNullifier1);
-        UserRegistry.UserProfile memory profile = userRegistry.getUserProfile(user1);
-        assertTrue(profile.isWorldIdVerified);
-        assertEq(profile.worldIdNullifierHash, worldIdNullifier1);
+    function testGetAddressByNullifier_NotRegistered() public {
+        assertEq(userRegistry.getAddressByNullifier(worldIdNullifier1), address(0), "Should return address(0) for non-registered nullifier");
     }
 
-    function testUpdateFilecoinDataPointer() public {
-        vm.prank(owner);
-        userRegistry.registerOrUpdateUser(user1, worldIdNullifier1);
-        string memory cid = "QmSomeFilecoinCID";
-        vm.prank(owner);
-        userRegistry.updateFilecoinDataPointer(user1, cid);
-        UserRegistry.UserProfile memory profile = userRegistry.getUserProfile(user1);
-        assertEq(profile.filecoinDataPointer, cid, "Filecoin data pointer mismatch");
+    function testRemoveUser() public {
+        userRegistry.registerUser(user1, worldIdNullifier1);
+        assertTrue(userRegistry.isUserRegistered(user1), "User should be registered before removal");
+        assertTrue(userRegistry.isNullifierRegistered(worldIdNullifier1), "Nullifier should be registered before removal");
+
+        userRegistry.removeUser(user1);
+
+        assertFalse(userRegistry.isUserRegistered(user1), "User should not be registered after removal");
+        assertEq(userRegistry.getWorldIdNullifier(user1), 0, "Nullifier for user1 should be 0 after removal");
+        assertEq(userRegistry.getAddressByNullifier(worldIdNullifier1), address(0), "Address for nullifier1 should be address(0) after removal");
+        assertFalse(userRegistry.isNullifierRegistered(worldIdNullifier1), "Nullifier should not be marked as registered after removal");
     }
 
-    function test_RevertIf_UpdateFilecoinDataPointerUnregisteredUser() public {
-        string memory cid = "QmSomeFilecoinCID";
-        vm.prank(owner);
-        vm.expectRevert(bytes("UserRegistry: User not registered/verified"));
-        userRegistry.updateFilecoinDataPointer(user1, cid);
+    function test_RevertIf_RemoveUnregisteredUser() public {
+        vm.expectRevert("UserRegistry: User not registered");
+        userRegistry.removeUser(user1);
     }
 
-    function testUpdateReputationScore() public {
-        vm.prank(owner);
-        userRegistry.registerOrUpdateUser(user1, worldIdNullifier1);
-        uint256 newScore = 100;
-        vm.prank(owner);
-        userRegistry.updateReputationScore(user1, newScore);
-        UserRegistry.UserProfile memory profile = userRegistry.getUserProfile(user1);
-        assertEq(profile.reputationScore, newScore, "Reputation score mismatch");
-    }
-
-    function test_RevertIf_UpdateReputationScoreUnregisteredUser() public {
-        uint256 newScore = 100;
-        vm.prank(owner);
-        vm.expectRevert(bytes("UserRegistry: User not registered/verified"));
-        userRegistry.updateReputationScore(user1, newScore);
-    }
-
-    // Test Ownable functions (transferOwnership, renounceOwnership)
-    function testTransferOwnership() public {
-        address newOwner = address(0x3);
-        assertEq(userRegistry.owner(), owner, "Initial owner should be test contract");
-        vm.prank(owner);
-        userRegistry.transferOwnership(newOwner);
-        assertEq(userRegistry.owner(), newOwner, "Ownership should be transferred");
-    }
-
-    function test_RevertIf_TransferOwnershipNonOwner() public {
-        address newOwner = address(0x3);
-        address nonOwner = address(0x4);
-        vm.prank(nonOwner);
-        // Expect OpenZeppelin's OwnableUnauthorizedAccount error
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, nonOwner));
-        userRegistry.transferOwnership(newOwner);
-    }
-
-    function testRenounceOwnership() public {
-        assertEq(userRegistry.owner(), owner, "Initial owner should be test contract");
-        vm.prank(owner);
-        userRegistry.renounceOwnership();
-        assertEq(userRegistry.owner(), address(0), "Owner should be zero address after renouncing");
-    }
-
-    function test_RevertIf_RenounceOwnershipNonOwner() public {
-        address nonOwner = address(0x4);
-        vm.prank(nonOwner);
-        // Expect OpenZeppelin's OwnableUnauthorizedAccount error
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, nonOwner));
-        userRegistry.renounceOwnership();
+    // Test registering the same user and nullifier again (should ideally be idempotent or revert)
+    // Current implementation reverts on registering an existing address or nullifier.
+    function testRegisterExistingUserAndNullifierAgain() public {
+        userRegistry.registerUser(user1, worldIdNullifier1);
+        
+        // Attempt to register the exact same mapping again
+        // This will revert due to "UserRegistry: World ID already registered" 
+        // or "UserRegistry: Address already has a World ID registered"
+        // depending on the check order, which is fine.
+        vm.expectRevert("UserRegistry: World ID already registered"); 
+        userRegistry.registerUser(user1, worldIdNullifier1);
     }
 } 

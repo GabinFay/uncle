@@ -22,9 +22,9 @@ contract P2PLendingTest is Test {
     address voucher1 = vm.addr(3);
     address reputationOAppMockAddress = vm.addr(8);
 
-    bytes32 borrowerNullifier = keccak256(abi.encodePacked("borrowerN"));
-    bytes32 lenderNullifier = keccak256(abi.encodePacked("lenderN"));
-    bytes32 voucherNullifier = keccak256(abi.encodePacked("voucherN"));
+    uint256 borrowerNullifier = 44444;
+    uint256 lenderNullifier = 55555;
+    uint256 voucherNullifier = 66666;
 
     uint256 constant ONE_DAY_SECONDS = 1 days;
     uint256 constant DEFAULT_INTEREST_RATE_P2P = 500; // 5.00%
@@ -56,9 +56,9 @@ contract P2PLendingTest is Test {
         vm.prank(owner);
         reputation.setP2PLendingContractAddress(address(p2pLending));
 
-        vm.prank(owner); userRegistry.registerOrUpdateUser(borrower, borrowerNullifier);
-        vm.prank(owner); userRegistry.registerOrUpdateUser(lender, lenderNullifier);
-        vm.prank(owner); userRegistry.registerOrUpdateUser(voucher1, voucherNullifier);
+        vm.prank(owner); userRegistry.registerUser(borrower, borrowerNullifier);
+        vm.prank(owner); userRegistry.registerUser(lender, lenderNullifier);
+        vm.prank(owner); userRegistry.registerUser(voucher1, voucherNullifier);
         mockDai = new MockERC20("Mock DAI", "mDAI", 18);
         mockUsdc = new MockERC20("Mock USDC", "mUSDC", 6);
         mockDai.mint(borrower, 2000 * 1e18);
@@ -225,11 +225,11 @@ contract P2PLendingTest is Test {
         vm.startPrank(borrower);
         mockDai.approve(address(p2pLending), totalDue);
         vm.expectEmit(false, true, true, true, address(p2pLending));
-        emit LoanRepaymentMade(bytes32(0), totalDue, totalDue);
+        emit LoanRepaymentMade(agreementId, totalDue, totalDue);
         vm.expectEmit(false, false, false, true, address(p2pLending));
-        emit LoanAgreementRepaid(bytes32(0));
+        emit LoanAgreementRepaid(agreementId);
         vm.expectEmit(true, true, false, true, address(reputation));
-        emit ReputationUpdated(borrower, reputation.REPUTATION_POINTS_REPAID(), "Loan repaid on time");
+        emit ReputationUpdated(borrower, reputation.REPUTATION_POINTS_REPAID(), "Loan repaid");
         vm.expectEmit(true, true, false, true, address(reputation));
         emit ReputationUpdated(lender, reputation.REPUTATION_POINTS_LENT_SUCCESSFULLY(), "Loan lent and repaid");
 
@@ -276,7 +276,7 @@ contract P2PLendingTest is Test {
         vm.startPrank(borrower);
         mockDai.approve(address(p2pLending), remainingPayment);
         vm.expectEmit(true, true, false, true, address(reputation));
-        emit ReputationUpdated(borrower, reputation.REPUTATION_POINTS_REPAID(), "Loan repaid on time"); 
+        emit ReputationUpdated(borrower, reputation.REPUTATION_POINTS_REPAID(), "Loan repaid"); 
         vm.expectEmit(true, true, false, true, address(reputation));
         emit ReputationUpdated(lender, reputation.REPUTATION_POINTS_LENT_SUCCESSFULLY(), "Loan lent and repaid");
         p2pLending.repayP2PLoan(agreementId, remainingPayment);
@@ -353,15 +353,17 @@ contract P2PLendingTest is Test {
         uint256 contractUsdcBalanceBefore = mockUsdc.balanceOf(address(p2pLending));
 
         vm.expectEmit(false, false, false, true, address(p2pLending));
-        emit LoanAgreementDefaulted(bytes32(0)); 
+        emit LoanAgreementDefaulted(agreementId);
+
         vm.expectEmit(true, true, false, true, address(reputation));
         emit ReputationUpdated(borrower, reputation.REPUTATION_POINTS_DEFAULTED(), "Loan defaulted");
-        // Expect VouchSlashed and ReputationUpdated for voucher
+        
         uint256 expectedSlashAmount = (vouchStakeAmount * 1000) / BASIS_POINTS_TEST; // 10%
-        vm.expectEmit(true, true, true, true, address(reputation)); // voucher, defaultingBorrower, slashedAmount, lenderToCompensate
+        vm.expectEmit(true, true, true, true, address(reputation));
         emit VouchSlashed(voucher1, borrower, expectedSlashAmount, lender);
+
         vm.expectEmit(true, true, false, true, address(reputation));
-        emit ReputationUpdated(voucher1, voucherProfileBefore.currentReputationScore + reputation.REPUTATION_POINTS_VOUCH_DEFAULTED_VOUCHER(), "Vouched loan defaulted");
+        emit ReputationUpdated(voucher1, voucherProfileBefore.currentReputationScore + reputation.REPUTATION_POINTS_VOUCH_DEFAULTED_VOUCHER(), "Vouched loan defaulted, stake slashed");
 
         p2pLending.handleP2PDefault(agreementId);
 
@@ -408,13 +410,18 @@ contract P2PLendingTest is Test {
 
         vm.warp(block.timestamp + loanDuration + ONE_DAY_SECONDS);
 
-        vm.expectEmit(true, true, false, true, address(reputation)); // Borrower default rep update
+        vm.expectEmit(false, false, false, true, address(p2pLending));
+        emit LoanAgreementDefaulted(agreementId);
+
+        vm.expectEmit(true, true, false, true, address(reputation)); 
         emit ReputationUpdated(borrower, reputation.REPUTATION_POINTS_DEFAULTED(), "Loan defaulted");
+        
         uint256 expectedSlashAmount = (vouchStakeAmount * 1000) / BASIS_POINTS_TEST; // 10%
-        vm.expectEmit(true, true, true, true, address(reputation)); // VouchSlashed
+        vm.expectEmit(true, true, true, true, address(reputation)); 
         emit VouchSlashed(voucher1, borrower, expectedSlashAmount, lender);
-        vm.expectEmit(true, true, false, true, address(reputation)); // Voucher rep update
-        emit ReputationUpdated(voucher1, voucherProfileBefore.currentReputationScore + reputation.REPUTATION_POINTS_VOUCH_DEFAULTED_VOUCHER(), "Vouched loan defaulted");
+        
+        vm.expectEmit(true, true, false, true, address(reputation)); 
+        emit ReputationUpdated(voucher1, voucherProfileBefore.currentReputationScore + reputation.REPUTATION_POINTS_VOUCH_DEFAULTED_VOUCHER(), "Vouched loan defaulted, stake slashed");
 
         p2pLending.handleP2PDefault(agreementId);
 

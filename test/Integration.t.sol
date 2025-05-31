@@ -38,8 +38,8 @@ contract IntegrationTest is Test {
     address reputationOAppIntegrationMockAddress = vm.addr(12); // For Reputation OApp
 
     uint256 constant INITIAL_MINT_AMOUNT = 1_000_000 * 1e18; // For DAI (18 decimals)
-    bytes32 constant USER1_NULLIFIER = keccak256(abi.encodePacked("verified_user1_integration"));
-    bytes32 constant USER2_NULLIFIER = keccak256(abi.encodePacked("verified_user2_integration"));
+    uint256 constant USER1_NULLIFIER = 11111; // Changed to uint256
+    uint256 constant USER2_NULLIFIER = 22222; // Changed to uint256
     address[] emptyVoucherAddresses; // For applyForLoan calls not testing vouching
 
     function setUp() public {
@@ -76,8 +76,8 @@ contract IntegrationTest is Test {
         vm.stopPrank();
 
         // Register users
-        vm.prank(owner); userRegistry.registerOrUpdateUser(user1, USER1_NULLIFIER);
-        vm.prank(owner); userRegistry.registerOrUpdateUser(user2, USER2_NULLIFIER);
+        vm.prank(owner); userRegistry.registerUser(user1, USER1_NULLIFIER); // Changed to registerUser
+        vm.prank(owner); userRegistry.registerUser(user2, USER2_NULLIFIER); // Changed to registerUser
 
         // Mint tokens to users and treasury
         mockDAI.mint(user1, INITIAL_MINT_AMOUNT);
@@ -131,8 +131,8 @@ contract IntegrationTest is Test {
     function test_P2P_FullCycle_Request_Fund_Default_WithCollateral_WithVouch() public {
         // 1. User3 (voucher) vouches for User1 (borrower)
         address voucher = vm.addr(4); // New address for voucher to avoid confusion
-        bytes32 voucherNullifier = keccak256(abi.encodePacked("voucher_integration"));
-        vm.prank(owner); userRegistry.registerOrUpdateUser(voucher, voucherNullifier);
+        uint256 voucherNullifier = 33333; // Changed to uint256
+        vm.prank(owner); userRegistry.registerUser(voucher, voucherNullifier); // Changed to registerUser
         mockDAI.mint(voucher, 200 * 1e18); // Mint DAI to voucher
 
         uint256 vouchAmount = 50 * 1e18; // 50 mDAI

@@ -21,9 +21,9 @@ contract ReputationTest is Test {
     address actualP2PLendingAddress; // Will hold the address of p2pLendingInstanceForMocking
     address reputationOAppMockAddress = vm.addr(8); // From P2PLending tests, keep consistent if used
 
-    bytes32 user1Nullifier = keccak256(abi.encodePacked("user1N"));
-    bytes32 user2Nullifier = keccak256(abi.encodePacked("user2N"));
-    bytes32 user3Nullifier = keccak256(abi.encodePacked("user3N"));
+    uint256 user1Nullifier = 77777;
+    uint256 user2Nullifier = 88888;
+    uint256 user3Nullifier = 99999;
 
     function setUp() public {
         owner = address(this);
@@ -46,9 +46,9 @@ contract ReputationTest is Test {
         reputation.setP2PLendingContractAddress(actualP2PLendingAddress);
 
         // Register users
-        vm.prank(owner); userRegistry.registerOrUpdateUser(user1, user1Nullifier);
-        vm.prank(owner); userRegistry.registerOrUpdateUser(user2, user2Nullifier);
-        vm.prank(owner); userRegistry.registerOrUpdateUser(user3, user3Nullifier);
+        vm.prank(owner); userRegistry.registerUser(user1, user1Nullifier);
+        vm.prank(owner); userRegistry.registerUser(user2, user2Nullifier);
+        vm.prank(owner); userRegistry.registerUser(user3, user3Nullifier);
 
         mockDai = new MockERC20("Mock DAI", "mDAI", 18);
         mockDai.mint(user1, 1000 * 1e18);
@@ -74,7 +74,7 @@ contract ReputationTest is Test {
 
     function test_RevertIf_SetP2PLendingContractAddress_ZeroAddress() public {
         vm.prank(owner);
-        vm.expectRevert(bytes("Invalid P2P Lending contract address"));
+        vm.expectRevert(bytes("Invalid P2PLending contract address"));
         reputation.setP2PLendingContractAddress(address(0));
     }
 
@@ -100,9 +100,9 @@ contract ReputationTest is Test {
     }
 
     function test_RevertIf_UpdateReputationOnLoanRepayment_NotP2PContract() public {
-        vm.startPrank(user1); // Call from non-P2P contract address
-        vm.expectRevert(bytes("Reputation: Caller is not the P2P lending contract"));
-        reputation.updateReputationOnLoanRepayment(user1, user2, 100 * 1e18);
+        vm.startPrank(user1); // Any address other than P2PLending contract
+        vm.expectRevert(bytes("Reputation: Caller is not P2PLending contract"));
+        reputation.updateReputationOnLoanRepayment(user1, user2, 100e18);
         vm.stopPrank();
     }
 

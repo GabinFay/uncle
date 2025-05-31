@@ -276,7 +276,7 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
      * @param user The address to check for World ID verification.
      */
     modifier onlyVerifiedUser(address user) {
-        require(userRegistry.isUserWorldIdVerified(user), "P2PLending: User not World ID verified");
+        require(userRegistry.isUserRegistered(user), "P2PLending: User not World ID verified");
         _;
     }
 
@@ -330,7 +330,11 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
      * @param newReputationOAppAddress The address of the new IReputationOApp contract, or address(0).
      */
     function setReputationOAppAddress(address newReputationOAppAddress) external onlyOwner {
-        reputationOApp = IReputationOApp(newReputationOAppAddress);
+        if (newReputationOAppAddress == address(0)) {
+            delete reputationOApp; // Or set to a specific "disabled" interface if that pattern is used
+        } else {
+            reputationOApp = IReputationOApp(newReputationOAppAddress);
+        }
     }
     
     /**
