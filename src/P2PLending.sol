@@ -518,6 +518,17 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
             // Call Reputation.sol to update reputation for borrower and lender
             if (address(reputationContract) != address(0)) { 
                 reputationContract.updateReputationOnLoanRepayment(agreement.borrower, agreement.lender, agreement.principalAmount);
+                // Placeholder for LayerZero OApp call if integrated
+                // if (address(reputationOApp) != address(0)) {
+                //     // Get the latest scores after local update
+                //     Reputation.ReputationProfile memory borrowerProfile = reputationContract.getReputationProfile(agreement.borrower);
+                //     Reputation.ReputationProfile memory lenderProfile = reputationContract.getReputationProfile(agreement.lender);
+                //     bytes memory adapterParams = abi.encodePacked(uint16(1), uint(200000)); // Example adapter params
+                //     // Send borrower score
+                //     // reputationOApp.sendReputationToChain{value: estimatedFee}(OTHER_CHAIN_ID, agreement.borrower, borrowerProfile.currentReputationScore, adapterParams);
+                //     // Send lender score
+                //     // reputationOApp.sendReputationToChain{value: estimatedFee}(OTHER_CHAIN_ID, agreement.lender, lenderProfile.currentReputationScore, adapterParams);
+                // }
             }
         }
     }
@@ -548,6 +559,12 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
                 agreement.principalAmount,
                 new bytes32[](0) // Pass empty array explicitly 
             );
+            // Placeholder for LayerZero OApp call if integrated
+            // if (address(reputationOApp) != address(0)) {
+            //     Reputation.ReputationProfile memory borrowerProfile = reputationContract.getReputationProfile(agreement.borrower);
+            //     bytes memory adapterParams = abi.encodePacked(uint16(1), uint(200000)); // Example adapter params
+            //     // reputationOApp.sendReputationToChain{value: estimatedFee}(OTHER_CHAIN_ID, agreement.borrower, borrowerProfile.currentReputationScore, adapterParams);
+            // }
 
             // Now, handle slashing of vouches for the defaulting borrower
             Reputation.Vouch[] memory activeVouches = reputationContract.getActiveVouchesForBorrower(agreement.borrower);
