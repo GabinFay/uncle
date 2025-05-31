@@ -1,7 +1,33 @@
+# Node / Next.js
+node_modules
+.next/
+out/
+build/
+.DS_Store
+*.log
+.env
+.env*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.tsbuildinfo
+next-env.d.ts
+.vercel
+
+# Foundry
+cache/
+out/
+broadcast/
+deployments/
+lib/
+
+# Workspace specific
 status.md
+coverage/
+coverage.json
+
 .env
 .venv/
 *.pyc
-__pycache__/
-.DS_Store
-cache/ 
+__pycache__/ 
