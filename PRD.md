@@ -10,8 +10,13 @@ A peer-to-peer lending platform built on trust and verifiable reputation, anchor
 
 ## Hackathon Scope & Features:
 
-### MVP: Peer-to-Peer Lending & Reputation on World Chain
+*For a detailed breakdown of tasks, sprint-by-sprint goals, and specific bounty targets, please refer to `SPRINT_PLAN.md`.*
+
+The overall development is structured in phases, aiming to incorporate various sponsor technologies:
+
+### MVP: Peer-to-Peer Lending & Reputation on World Chain (Corresponds to Sprints 0-1 in `SPRINT_PLAN.md`)
 **Goal:** Demonstrate a functional P2P lending system with a robust reputation mechanism on a single chain (World Chain focus for the mini-app).
+**Key Technologies/Bounties:** World ID (World Mini App), Core EVM (Flow Killer App or similar), basic Blockscout usage.
 
 **Contracts & Features:**
 1.  **`UserRegistry.sol` (or similar for World ID users):**
@@ -38,8 +43,9 @@ A peer-to-peer lending platform built on trust and verifiable reputation, anchor
 4.  **World Chain Mini-App:**
     *   Frontend to interact with the contracts: view loan offers/requests, apply/fund loans, manage reputation, see user profiles.
 
-### V1: Cross-Chain Lending with LayerZero
+### V1: Cross-Chain Lending with LayerZero (Corresponds to elements of Sprint 3 in `SPRINT_PLAN.md`)
 **Goal:** Enable cross-chain P2P lending, with reputation data read from World Chain.
+**Key Technologies/Bounties:** LayerZero, potentially Flow as a secondary chain.
 
 **Contracts & Features:**
 1.  **Lending Contracts on Flow:** Deploy versions of `P2PLending.sol` (and potentially a minimal `UserRegistry.sol` or World ID integration method for Flow) on the Flow blockchain.
@@ -48,8 +54,9 @@ A peer-to-peer lending platform built on trust and verifiable reputation, anchor
     *   When a user on Flow applies for/offers a loan, their reputation from World Chain is fetched to influence terms/trust.
     *   Potentially, significant events on Flow (like a loan default) could trigger a message back to World Chain via LayerZero to update the global reputation (this part needs careful design for security and atomicity if direct updates are attempted).
 
-### V2: Blockscout Analytics Integration
-**Goal:** Enhance user profiles with on-chain analytics derived from Blockscout.
+### V2: Blockscout Analytics Integration & Further Sponsor Tech (Corresponds to elements of Sprint 2-3 in `SPRINT_PLAN.md`)
+**Goal:** Enhance user profiles with on-chain analytics and integrate other relevant sponsor technologies.
+**Key Technologies/Bounties:** Blockscout (SDK/Merits), vLayer/Flare (alternative data), Hedera (AI/HCS), Pyth (oracles), Filecoin (storage), 1inch (swaps).
 
 **Features:**
 1.  **Backend Service/Integration:**
@@ -69,8 +76,9 @@ A peer-to-peer lending platform built on trust and verifiable reputation, anchor
 ## Tech Stack (Hackathon Focus):
 *   **Smart Contracts:** Solidity
     *   Primary Chain (for reputation & initial lending): World Chain compatible (e.g., Polygon PoS, Optimism, Arbitrum - whatever World Chain uses or is easiest for mini-app).
-    *   Secondary Chain (for V1): Flow
+    *   Secondary Chain (for V1): Flow, or other EVM chains as per `SPRINT_PLAN.md` explorations.
 *   **Frontend:** React/Next.js (or other suitable framework for World Chain Mini-App).
 *   **Identity:** World ID.
-*   **Cross-Chain:** LayerZero (specifically LzCompose).
-*   **Explorer/Analytics (V2):** Blockscout. 
+*   **Cross-Chain:** LayerZero.
+*   **Explorer/Analytics (V2):** Blockscout.
+*   **Other Sponsor Technologies (as per `SPRINT_PLAN.md`):** vLayer, Flare, Hedera, Pyth, Filecoin, 1inch. 
