@@ -5,10 +5,19 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
  * @title UserRegistry
- * @dev Manages user registration and core identity attributes.
- * Users are verified via World ID (off-chain verification by backend, then recorded here).
+ * @author CreditInclusion Team
+ * @notice Manages user registration, World ID verification status, and basic profile data.
+ * @dev Verification of World ID is assumed to be done off-chain by a trusted backend (owner),
+ * which then calls `registerOrUpdateUser` to record the verification status on-chain.
  */
 contract UserRegistry is Ownable {
+    /**
+     * @notice Represents a user's profile data.
+     * @param isWorldIdVerified True if the user has been verified with World ID.
+     * @param worldIdNullifierHash The unique nullifier hash from World ID, ensuring privacy and uniqueness.
+     * @param reputationScore A general reputation score, potentially aggregated or a summary.
+     * @param filecoinDataPointer A pointer to user-related data stored on Filecoin (e.g., a CID or Deal ID).
+     */
     struct UserProfile {
         bool isWorldIdVerified;
         bytes32 worldIdNullifierHash; // Store hash of nullifier for privacy
@@ -17,19 +26,43 @@ contract UserRegistry is Ownable {
         // Add other relevant profile data as needed
     }
 
+    /**
+     * @notice Maps a user's address to their profile.
+     */
     mapping(address => UserProfile) public userProfiles;
+
+    /**
+     * @notice Maps a World ID nullifier hash to the user address it's registered with.
+     * @dev Used to ensure a single World ID nullifier is not registered to multiple addresses.
+     */
     mapping(bytes32 => address) public worldIdNullifierToAddress; // To ensure one World ID per address
 
+    /**
+     * @notice Emitted when a new user is registered or their World ID nullifier is updated.
+     * @param userAddress The address of the registered/updated user.
+     * @param worldIdNullifierHash The user's World ID nullifier hash.
+     */
     event UserRegistered(address indexed userAddress, bytes32 indexed worldIdNullifierHash);
+
+    /**
+     * @notice Emitted when any part of a user's profile (excluding initial registration details) is updated.
+     * @param userAddress The address of the user whose profile was updated.
+     */
     event UserProfileUpdated(address indexed userAddress);
 
+    /**
+     * @notice Contract constructor.
+     * @dev Initializes the contract and sets the deployer as the initial owner.
+     */
     constructor() Ownable(msg.sender) {}
 
     /**
-     * @dev Registers a new user or updates existing if World ID nullifier matches.
-     * Only callable by the owner (backend service) after off-chain World ID proof verification.
-     * @param userAddress The address of the user to register.
-     * @param worldIdNullifierHash_ The hash of the user's World ID nullifier.
+     * @notice Registers a new user or updates an existing user's World ID nullifier.
+     * @dev This function is `onlyOwner` and is intended to be called by a trusted backend service
+     * after successful off-chain verification of the user's World ID.
+     * It prevents registering the same nullifier to multiple addresses or the same address with multiple nullifiers.
+     * @param userAddress The Ethereum address of the user.
+     * @param worldIdNullifierHash_ The World ID nullifier hash for the user.
      */
     function registerOrUpdateUser(address userAddress, bytes32 worldIdNullifierHash_) external onlyOwner {
         require(userAddress != address(0), "UserRegistry: Invalid user address");
@@ -55,28 +88,29 @@ contract UserRegistry is Ownable {
     }
 
     /**
-     * @dev Checks if a user is World ID verified.
-     * @param userAddress The address of the user.
-     * @return True if the user is World ID verified, false otherwise.
+     * @notice Checks if a user has been verified with World ID.
+     * @param userAddress The address of the user to check.
+     * @return isVerified True if the user is World ID verified, false otherwise.
      */
-    function isUserWorldIdVerified(address userAddress) external view returns (bool) {
+    function isUserWorldIdVerified(address userAddress) external view returns (bool isVerified) {
         return userProfiles[userAddress].isWorldIdVerified;
     }
 
     /**
-     * @dev Gets the profile of a user.
+     * @notice Retrieves the profile data for a given user address.
      * @param userAddress The address of the user.
-     * @return The UserProfile struct.
+     * @return profile The UserProfile struct for the specified user.
      */
-    function getUserProfile(address userAddress) external view returns (UserProfile memory) {
+    function getUserProfile(address userAddress) external view returns (UserProfile memory profile) {
         return userProfiles[userAddress];
     }
 
     /**
-     * @dev Updates the Filecoin data pointer for a user.
-     * Only callable by the owner (backend service).
+     * @notice Updates the Filecoin data pointer associated with a user's profile.
+     * @dev This function is `onlyOwner`, intended for backend updates.
+     * Requires the user to be already registered and World ID verified.
      * @param userAddress The address of the user.
-     * @param filecoinDataPointer_ The new Filecoin data pointer.
+     * @param filecoinDataPointer_ The new Filecoin data pointer string (e.g., CID, Deal ID).
      */
     function updateFilecoinDataPointer(address userAddress, string calldata filecoinDataPointer_) external onlyOwner {
         require(userProfiles[userAddress].isWorldIdVerified, "UserRegistry: User not registered/verified");
@@ -85,11 +119,12 @@ contract UserRegistry is Ownable {
     }
 
     /**
-     * @dev Updates the reputation score for a user.
-     * Typically called by the ReputationOApp contract or a trusted backend service.
-     * For now, making it onlyOwner for simplicity until ReputationOApp is integrated.
+     * @notice Updates the general reputation score for a user in their profile.
+     * @dev This function is `onlyOwner`. Could be transitioned to be called by a dedicated Reputation contract/OApp.
+     * Requires the user to be already registered and World ID verified.
+     * The main reputation logic and detailed scores are expected to be in a separate `Reputation.sol` contract.
      * @param userAddress The address of the user.
-     * @param newReputationScore The new reputation score.
+     * @param newReputationScore The new general reputation score for the user.
      */
     function updateReputationScore(address userAddress, uint256 newReputationScore) external onlyOwner { // TODO: Change access control
         require(userProfiles[userAddress].isWorldIdVerified, "UserRegistry: User not registered/verified");

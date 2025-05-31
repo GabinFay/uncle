@@ -13,46 +13,80 @@ import "./Reputation.sol"; // IMPORT Reputation contract
 
 /**
  * @title P2PLending (Previously LoanContract)
- * @dev Manages the peer-to-peer lending lifecycle.
+ * @author CreditInclusion Team
+ * @notice Manages the peer-to-peer lending lifecycle, including loan offers, requests, agreements, repayments, and defaults.
+ * @dev Interacts with UserRegistry for World ID verification and Reputation contract for scoring and vouching.
+ *      This contract does not hold funds directly, except for collateral during active loan agreements.
  */
 contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
+    /**
+     * @notice Reference to the UserRegistry contract for verifying user identities.
+     */
     UserRegistry public userRegistry;
     // SocialVouching public socialVouching; // REMOVED
     // address payable public treasuryAddress; // REMOVED - P2P model
+    /**
+     * @notice Reference to the Reputation contract for managing user scores and vouching.
+     */
     Reputation public reputationContract; // CHANGED from reputationOApp and socialVouching concept
+    /**
+     * @notice Reference to the (optional) IReputationOApp interface for cross-chain reputation (placeholder).
+     */
     IReputationOApp public reputationOApp; // To be reviewed if still needed alongside direct Reputation.sol calls
 
-    struct LoanVoucherDetail { // This might be part of Reputation.sol or a shared struct
-        address voucherAddress;
-        address tokenAddress;
-        uint256 amountVouchedAtLoanTime;
-    }
+    // LoanVoucherDetail struct removed as vouching details are fully managed within Reputation.sol
+    // and P2PLending queries Reputation.sol for active vouches when needed (e.g., during default).
 
-    enum LoanStatus { Pending, Active, Repaid, Defaulted, Liquidated, OfferOpen, RequestOpen, AgreementReached, Cancelled }
+    /**
+     * @notice Defines the possible states of a loan offer, request, or agreement.
+     */
+    enum LoanStatus { 
+        Pending,    // Initial state for old loan model, potentially reusable
+        Active,     // Loan agreement is active and funds disbursed
+        Repaid,     // Loan agreement has been fully repaid
+        Defaulted,  // Loan agreement is past due and marked as defaulted
+        Liquidated, // Collateral seized (more relevant for old model, P2P default handles collateral transfer)
+        OfferOpen,  // A loan offer is available to be accepted
+        RequestOpen,// A loan request is available to be funded
+        AgreementReached, // Offer/Request has been matched, prior to becoming Active (or during same tx)
+        Cancelled   // Offer or Request has been cancelled before agreement
+    }
 
     // This Loan struct is from the old model, will be replaced by P2P structs
-    struct Loan_OLD_MODEL { 
-        bytes32 loanId;
-        address borrower;
-        uint256 principalAmount;
-        address loanToken; 
-        uint256 interestRate; 
-        uint256 duration; 
-        uint256 startTime;
-        uint256 dueDate; 
-        uint256 collateralAmount;
-        address collateralToken;
-        uint256 totalVouchedAmountAtApplication; 
-        LoanVoucherDetail[] vouches; 
-        uint256 amountPaid; 
-        LoanStatus status;
-    }
+    // struct Loan_OLD_MODEL { 
+    //     bytes32 loanId;
+    //     address borrower;
+    //     uint256 principalAmount;
+    //     address loanToken; 
+    //     uint256 interestRate; 
+    //     uint256 duration; 
+    //     uint256 startTime;
+    //     uint256 dueDate; 
+    //     uint256 collateralAmount;
+    //     address collateralToken;
+    //     uint256 totalVouchedAmountAtApplication; 
+    //     LoanVoucherDetail[] vouches; 
+    //     uint256 amountPaid; 
+    //     LoanStatus status;
+    // }
 
     // mapping(bytes32 => Loan_OLD_MODEL) public loans; // Will be replaced
     // mapping(address => bytes32[]) public userLoans; // Will be replaced or adapted
     // uint256 public loanCounter; // For generating unique loan IDs - will need similar for P2P agreements
 
     // --- P2P Specific Structs ---
+    /**
+     * @notice Represents a loan offer created by a lender.
+     * @param offerId Unique identifier for the loan offer.
+     * @param lender Address of the user offering to lend funds.
+     * @param offerAmount The principal amount offered.
+     * @param loanToken The ERC20 token in which the loan is denominated.
+     * @param interestRate The interest rate for the loan, in basis points (e.g., 500 for 5.00%).
+     * @param duration The duration of the loan in seconds.
+     * @param collateralRequiredAmount Amount of collateral required by the lender (0 if none).
+     * @param collateralRequiredToken The ERC20 token for collateral (address(0) if none).
+     * @param status Current status of the loan offer (e.g., OfferOpen, AgreementReached).
+     */
     struct LoanOffer {
         bytes32 offerId;
         address lender;
@@ -67,6 +101,18 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
         // Link to borrower if accepted
     }
 
+    /**
+     * @notice Represents a loan request created by a borrower.
+     * @param requestId Unique identifier for the loan request.
+     * @param borrower Address of the user requesting to borrow funds.
+     * @param requestAmount The principal amount requested.
+     * @param loanToken The ERC20 token in which the loan is requested.
+     * @param proposedInterestRate The maximum interest rate the borrower is willing to pay, in basis points.
+     * @param proposedDuration The desired duration of the loan in seconds.
+     * @param offeredCollateralAmount Amount of collateral the borrower is offering (0 if none).
+     * @param offeredCollateralToken The ERC20 token for collateral offered (address(0) if none).
+     * @param status Current status of the loan request (e.g., RequestOpen, AgreementReached).
+     */
     struct LoanRequest {
         bytes32 requestId;
         address borrower;
@@ -81,6 +127,24 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
         // Link to lender if accepted
     }
 
+    /**
+     * @notice Represents an active loan agreement formed between a lender and a borrower.
+     * @param agreementId Unique identifier for the loan agreement.
+     * @param originalOfferId ID of the LoanOffer this agreement originated from (if applicable).
+     * @param originalRequestId ID of the LoanRequest this agreement originated from (if applicable).
+     * @param lender Address of the lender.
+     * @param borrower Address of the borrower.
+     * @param principalAmount The principal amount of the loan.
+     * @param loanToken The ERC20 token of the loan principal.
+     * @param interestRate The agreed interest rate in basis points.
+     * @param duration The agreed duration of the loan in seconds.
+     * @param collateralAmount The amount of collateral locked for this loan (0 if none).
+     * @param collateralToken The ERC20 token of the collateral (address(0) if none).
+     * @param startTime Timestamp when the loan agreement became active.
+     * @param dueDate Timestamp when the loan is due for full repayment.
+     * @param amountPaid Total amount repaid by the borrower so far.
+     * @param status Current status of the loan agreement (e.g., Active, Repaid, Defaulted).
+     */
     struct LoanAgreement {
         bytes32 agreementId;
         bytes32 originalOfferId; // if created from offer
@@ -100,19 +164,52 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
         // Link to vouches if applicable from Reputation.sol
     }
 
+    /**
+     * @notice Maps loan offer IDs to LoanOffer structs.
+     */
     mapping(bytes32 => LoanOffer) public loanOffers;
+    /**
+     * @notice Maps user addresses to an array of IDs of loan offers they created.
+     */
     mapping(address => bytes32[]) public userLoanOffers; // lender => offer IDs
+    /**
+     * @notice Counter to help generate unique loan offer IDs.
+     */
     uint256 public loanOfferCounter;
 
+    /**
+     * @notice Maps loan request IDs to LoanRequest structs.
+     */
     mapping(bytes32 => LoanRequest) public loanRequests;
+    /**
+     * @notice Maps user addresses to an array of IDs of loan requests they created.
+     */
     mapping(address => bytes32[]) public userLoanRequests; // borrower => request IDs
+    /**
+     * @notice Counter to help generate unique loan request IDs.
+     */
     uint256 public loanRequestCounter;
 
+    /**
+     * @notice Maps loan agreement IDs to LoanAgreement structs.
+     */
     mapping(bytes32 => LoanAgreement) public loanAgreements;
+    /**
+     * @notice Maps user addresses to an array of IDs of loan agreements where they are the lender.
+     */
     mapping(address => bytes32[]) public userLoanAgreementsAsLender;   // lender => agreement IDs
+    /**
+     * @notice Maps user addresses to an array of IDs of loan agreements where they are the borrower.
+     */
     mapping(address => bytes32[]) public userLoanAgreementsAsBorrower; // borrower => agreement IDs
+    /**
+     * @notice Counter to help generate unique loan agreement IDs.
+     */
     uint256 public loanAgreementCounter;
 
+    /**
+     * @notice Constant representing 100.00% for basis points calculations (10000 = 100%).
+     */
     uint256 public constant BASIS_POINTS = 10000;
 
     // --- Events ---
@@ -125,15 +222,59 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
     // event LoanDefaulted(bytes32 indexed loanId);
     // event LoanLiquidated(bytes32 indexed loanId, uint256 collateralSeized);
 
+    /**
+     * @notice Emitted when a new loan offer is created.
+     * @param offerId Unique ID of the offer.
+     * @param lender Address of the lender creating the offer.
+     * @param amount Principal amount offered.
+     * @param token Token of the principal amount.
+     * @param interestRate Interest rate in basis points.
+     * @param duration Duration of the loan in seconds.
+     */
     event LoanOfferCreated(bytes32 indexed offerId, address indexed lender, uint256 amount, address token, uint256 interestRate, uint256 duration);
+    /**
+     * @notice Emitted when a new loan request is created.
+     * @param requestId Unique ID of the request.
+     * @param borrower Address of the borrower creating the request.
+     * @param amount Principal amount requested.
+     * @param token Token of the principal amount.
+     * @param proposedInterestRate Proposed interest rate in basis points.
+     * @param proposedDuration Proposed duration of the loan in seconds.
+     */
     event LoanRequestCreated(bytes32 indexed requestId, address indexed borrower, uint256 amount, address token, uint256 proposedInterestRate, uint256 proposedDuration);
+    /**
+     * @notice Emitted when a loan offer is accepted or a loan request is funded, forming an agreement.
+     * @param agreementId Unique ID of the newly formed loan agreement.
+     * @param lender Address of the lender in the agreement.
+     * @param borrower Address of the borrower in the agreement.
+     * @param amount Principal amount of the loan.
+     * @param token Token of the principal amount.
+     */
     event LoanAgreementFormed(bytes32 indexed agreementId, address indexed lender, address indexed borrower, uint256 amount, address token);
+    /**
+     * @notice Emitted when a repayment is made on a loan agreement.
+     * @param agreementId ID of the loan agreement.
+     * @param amountPaid The amount paid in this transaction.
+     * @param totalPaid The new total amount paid towards the loan so far.
+     */
     event LoanRepaymentMade(bytes32 indexed agreementId, uint256 amountPaid, uint256 totalPaid);
+    /**
+     * @notice Emitted when a loan agreement is fully repaid.
+     * @param agreementId ID of the fully repaid loan agreement.
+     */
     event LoanAgreementRepaid(bytes32 indexed agreementId);
+    /**
+     * @notice Emitted when a loan agreement is marked as defaulted.
+     * @param agreementId ID of the defaulted loan agreement.
+     */
     event LoanAgreementDefaulted(bytes32 indexed agreementId);
     // Add events for collateral handling, extensions, etc.
 
     // --- Modifiers ---
+    /**
+     * @dev Modifier to ensure the calling user is verified in the UserRegistry.
+     * @param user The address to check for World ID verification.
+     */
     modifier onlyVerifiedUser(address user) {
         require(userRegistry.isUserWorldIdVerified(user), "P2PLending: User not World ID verified");
         _;
@@ -144,6 +285,13 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
     //     _;
     // }
 
+    /**
+     * @notice Contract constructor.
+     * @param _userRegistryAddress Address of the deployed UserRegistry contract.
+     * @param _reputationContractAddress Address of the deployed Reputation contract.
+     * @param _treasuryAddressForOldLogic (Unused) Placeholder from previous contract version.
+     * @param initialReputationOAppAddress Address of the (optional) Reputation OApp for cross-chain features. Can be address(0).
+     */
     constructor(
         address _userRegistryAddress,
         address _reputationContractAddress,
@@ -162,76 +310,52 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
         // The socialVouchingAddress param will be repurposed for the Reputation.sol contract later
     }
 
-    // --- Functions to be refactored/removed from OLD LoanContract model ---
-
-    /*
-    function applyForLoan_OLD(
-        uint256 principalAmount_,
-        address loanToken_,
-        uint256 interestRate_,
-        uint256 duration_,
-        uint256 collateralAmount_,
-        address collateralToken_,
-        address[] calldata voucherAddressesToConsider 
-    ) external nonReentrant onlyVerifiedUser(msg.sender) returns (bytes32 newLoanId) {
-        // ... OLD LOGIC ...
-    }
-
-    function approveLoan_OLD(bytes32 loanId) external onlyOwner nonReentrant onlyLoanExists(loanId) {
-        // ... OLD LOGIC ...
-    }
-
-    function repayLoan_OLD(bytes32 loanId, uint256 paymentAmount) external payable nonReentrant onlyLoanExists(loanId) {
-        // ... OLD LOGIC ...
-    }
-
-    function checkAndSetDefaultStatus_OLD(bytes32 loanId) external nonReentrant onlyLoanExists(loanId) {
-        // ... OLD LOGIC ...
-    }
-
-    function liquidateLoan_OLD(bytes32 loanId) external onlyOwner nonReentrant onlyLoanExists(loanId) {
-        // ... OLD LOGIC ...
-    }
-
-    function getLoanDetails_OLD(bytes32 loanId) external view onlyLoanExists(loanId) returns (Loan_OLD_MODEL memory) {
-        return loans[loanId];
-    }
-
-    function getUserLoanIds_OLD(address userAddress) external view returns (bytes32[] memory) {
-        return userLoans[userAddress];
-    }
-
-    function calculateTotalAmountDue_OLD(bytes32 loanId) public view onlyLoanExists(loanId) returns (uint256) {
-        // ... OLD LOGIC ...
-    }
-
-    function calculateRemainingAmountDue_OLD(bytes32 loanId) public view onlyLoanExists(loanId) returns (uint256) {
-        // ... OLD LOGIC ...
-    }
-    
-    function setTreasuryAddress_OLD(address payable newTreasuryAddress) external onlyOwner {
-        revert("P2P model: Treasury not used directly");
-    }
-    */
-
     // --- Admin Functions (mostly for setters, Ownable ensures only owner) ---
+    /**
+     * @notice Sets the address of the main Reputation contract.
+     * @dev Can only be called by the contract owner.
+     *      Changing this address affects where reputation updates and vouch slashing calls are directed.
+     * @param _newReputationContractAddress The address of the new Reputation contract.
+     */
     function setReputationContractAddress(address _newReputationContractAddress) external onlyOwner {
         require(_newReputationContractAddress != address(0), "Invalid Reputation contract address");
         reputationContract = Reputation(_newReputationContractAddress);
     }
     
+    /**
+     * @notice Sets the address of the LayerZero Reputation OApp contract.
+     * @dev Can only be called by the contract owner.
+     *      This is for the optional cross-chain reputation functionality.
+     *      Set to address(0) to disable OApp interactions.
+     * @param newReputationOAppAddress The address of the new IReputationOApp contract, or address(0).
+     */
     function setReputationOAppAddress(address newReputationOAppAddress) external onlyOwner {
-        // Allow setting to address(0) if OApp is to be disabled
         reputationOApp = IReputationOApp(newReputationOAppAddress);
     }
     
-    // The setPythAddress function is removed/reverted as Pyth is not used
+    /**
+     * @notice Placeholder function for setting a Pyth Network address (feature removed).
+     * @dev This function will always revert as Pyth Network integration has been removed from this contract.
+     */
     function setPythAddress(address /* newPythAddress */) external onlyOwner {
         revert("Pyth integration removed"); 
     }
 
     // --- P2P Lending Core Functions ---
 
+    /**
+     * @notice Creates a new loan offer as a lender.
+     * @dev The lender must have sufficient balance of `loanToken_` and must approve this contract
+     *      to transfer `offerAmount_` if the offer is accepted. This approval should be done prior to calling.
+     *      The offer becomes `OfferOpen`. Generates a unique offer ID.
+     * @param offerAmount_ The principal amount the lender is offering.
+     * @param loanToken_ The ERC20 token for the loan principal.
+     * @param interestRate_ The interest rate in basis points (e.g., 500 for 5.00%).
+     * @param duration_ The duration of the loan in seconds.
+     * @param collateralRequiredAmount_ The amount of collateral required from the borrower (0 if none).
+     * @param collateralRequiredToken_ The ERC20 token for collateral (address(0) if none).
+     * @return offerId The unique ID of the newly created loan offer.
+     */
     function createLoanOffer(
         uint256 offerAmount_,
         address loanToken_,
@@ -278,6 +402,20 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
         return offerId;
     }
 
+    /**
+     * @notice Creates a new loan request as a borrower.
+     * @dev If collateral is offered, the borrower must have sufficient balance of `offeredCollateralToken_`
+     *      and must approve this contract to transfer `offeredCollateralAmount_` if the request is funded.
+     *      This collateral approval should be done prior to calling.
+     *      The request becomes `RequestOpen`. Generates a unique request ID.
+     * @param requestAmount_ The principal amount the borrower is requesting.
+     * @param loanToken_ The ERC20 token for the loan principal.
+     * @param proposedInterestRate_ The maximum interest rate the borrower is willing to pay, in basis points.
+     * @param proposedDuration_ The desired duration of the loan in seconds.
+     * @param offeredCollateralAmount_ The amount of collateral the borrower is offering (0 if none).
+     * @param offeredCollateralToken_ The ERC20 token for collateral (address(0) if none).
+     * @return requestId The unique ID of the newly created loan request.
+     */
     function createLoanRequest(
         uint256 requestAmount_,
         address loanToken_,
@@ -320,10 +458,21 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
         return requestId;
     }
 
+    /**
+     * @notice Allows a borrower to accept an open loan offer, forming a loan agreement.
+     * @dev Transfers loan principal from lender to borrower. If collateral is required by the offer,
+     *      transfers collateral from borrower to this contract. Borrower must have approved collateral transfer.
+     *      Lender must have approved principal transfer from their account by this contract.
+     *      Marks the offer as `AgreementReached` and creates an `Active` loan agreement.
+     * @param offerId_ The ID of the loan offer to accept.
+     * @param collateralOfferedByBorrowerAmount_ Amount of collateral provided by borrower (must match offer requirement).
+     * @param collateralOfferedByBorrowerToken_ Token of collateral provided by borrower (must match offer requirement).
+     * @return agreementId The unique ID of the newly formed loan agreement.
+     */
     function acceptLoanOffer(
         bytes32 offerId_,
-        uint256 collateralOfferedByBorrowerAmount_, // If offer requires collateral, borrower must provide this amount
-        address collateralOfferedByBorrowerToken_  // Token for the collateral
+        uint256 collateralOfferedByBorrowerAmount_,
+        address collateralOfferedByBorrowerToken_
     ) external nonReentrant onlyVerifiedUser(msg.sender) returns (bytes32 agreementId) {
         require(loanOffers[offerId_].lender != address(0), "Offer does not exist");
         LoanOffer storage offer = loanOffers[offerId_];
@@ -380,6 +529,15 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
         return agreementId;
     }
 
+    /**
+     * @notice Allows a lender to fund an open loan request, forming a loan agreement.
+     * @dev Transfers loan principal from lender to borrower. If collateral was offered in the request,
+     *      transfers collateral from borrower to this contract. Borrower must have approved collateral transfer.
+     *      Lender must have approved principal transfer from their account by this contract.
+     *      Marks the request as `AgreementReached` and creates an `Active` loan agreement.
+     * @param requestId_ The ID of the loan request to fund.
+     * @return agreementId The unique ID of the newly formed loan agreement.
+     */
     function fundLoanRequest(
         bytes32 requestId_
         // Potentially allow lender to specify slightly different terms if request is flexible,
@@ -437,42 +595,82 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
     }
 
     // --- Getter Functions ---
+    /**
+     * @notice Retrieves the details of a specific loan offer.
+     * @param offerId The ID of the loan offer.
+     * @return The LoanOffer struct for the given ID. Reverts if the offer does not exist.
+     */
     function getLoanOfferDetails(bytes32 offerId) external view returns (LoanOffer memory) {
         require(loanOffers[offerId].lender != address(0), "Offer does not exist");
         return loanOffers[offerId];
     }
 
+    /**
+     * @notice Retrieves the details of a specific loan request.
+     * @param requestId The ID of the loan request.
+     * @return The LoanRequest struct for the given ID. Reverts if the request does not exist.
+     */
     function getLoanRequestDetails(bytes32 requestId) external view returns (LoanRequest memory) {
         require(loanRequests[requestId].borrower != address(0), "Request does not exist");
         return loanRequests[requestId];
     }
 
+    /**
+     * @notice Retrieves the details of a specific loan agreement.
+     * @param agreementId The ID of the loan agreement.
+     * @return The LoanAgreement struct for the given ID. Reverts if the agreement does not exist.
+     */
     function getLoanAgreementDetails(bytes32 agreementId) external view returns (LoanAgreement memory) {
-        require(loanAgreements[agreementId].borrower != address(0), "Agreement does not exist"); // Check borrower or lender
+        require(loanAgreements[agreementId].borrower != address(0), "Agreement does not exist");
         return loanAgreements[agreementId];
     }
 
+    /**
+     * @notice Retrieves an array of loan offer IDs created by a specific user.
+     * @param user The address of the user (lender).
+     * @return An array of bytes32 offer IDs.
+     */
     function getUserLoanOfferIds(address user) external view returns (bytes32[] memory) {
         return userLoanOffers[user];
     }
 
+    /**
+     * @notice Retrieves an array of loan request IDs created by a specific user.
+     * @param user The address of the user (borrower).
+     * @return An array of bytes32 request IDs.
+     */
     function getUserLoanRequestIds(address user) external view returns (bytes32[] memory) {
         return userLoanRequests[user];
     }
 
+    /**
+     * @notice Retrieves an array of loan agreement IDs where a specific user is the lender.
+     * @param user The address of the user (lender).
+     * @return An array of bytes32 agreement IDs.
+     */
     function getUserLoanAgreementIdsAsLender(address user) external view returns (bytes32[] memory) {
         return userLoanAgreementsAsLender[user];
     }
 
+    /**
+     * @notice Retrieves an array of loan agreement IDs where a specific user is the borrower.
+     * @param user The address of the user (borrower).
+     * @return An array of bytes32 agreement IDs.
+     */
     function getUserLoanAgreementIdsAsBorrower(address user) external view returns (bytes32[] memory) {
         return userLoanAgreementsAsBorrower[user];
     }
 
+    // --- Internal Helper Functions & Loan Lifecycle Management ---
+    /**
+     * @dev Internal function to calculate simple interest for a loan.
+     * @param principalAmount The principal amount of the loan.
+     * @param interestRateBps The interest rate in basis points.
+     * @return interest The calculated interest amount.
+     */
     function _calculateInterest(
         uint256 principalAmount,
-        uint256 interestRateBps,
-        uint256 /* durationSeconds */, // Not directly used in this simple model
-        uint256 /* loanTermSeconds */  // Not directly used if rate is flat for the term
+        uint256 interestRateBps
     ) internal pure returns (uint256 interest) {
         if (principalAmount == 0 || interestRateBps == 0) {
             return 0;
@@ -480,16 +678,29 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
         return (principalAmount * interestRateBps) / BASIS_POINTS;
     }
 
+    /**
+     * @dev Internal function to calculate the total amount due for a loan agreement (principal + interest).
+     * @param agreement The LoanAgreement struct for which to calculate the total due.
+     * @return totalDue The total amount due for the loan.
+     */
     function _calculateTotalDue(LoanAgreement storage agreement) internal view returns (uint256 totalDue) {
         uint256 interest = _calculateInterest(
             agreement.principalAmount, 
-            agreement.interestRate, 
-            agreement.duration, // Pass agreement duration
-            agreement.duration  // Rate is for this loan term
+            agreement.interestRate
         );
         return agreement.principalAmount + interest;
     }
 
+    // --- Repayment and Default Handling ---
+    /**
+     * @notice Allows a borrower to make a payment towards an active loan agreement.
+     * @dev Transfers `paymentAmount` of `loanToken` from borrower to lender.
+     *      Updates `amountPaid`. If fully repaid, marks agreement as `Repaid`, returns collateral (if any)
+     *      to borrower, and calls `reputationContract.updateReputationOnLoanRepayment`.
+     *      Prevents overpayment. Borrower must have approved `paymentAmount` transfer to this contract.
+     * @param agreementId The ID of the loan agreement to repay.
+     * @param paymentAmount The amount of `loanToken` to repay.
+     */
     function repayP2PLoan(bytes32 agreementId, uint256 paymentAmount) external nonReentrant {
         LoanAgreement storage agreement = loanAgreements[agreementId];
         require(agreement.borrower == msg.sender, "Only borrower can repay");
@@ -498,9 +709,8 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
 
         uint256 totalDue = _calculateTotalDue(agreement);
         uint256 remainingDue = totalDue - agreement.amountPaid;
-        require(paymentAmount <= remainingDue, "Payment exceeds remaining due"); // Prevent overpayment complexity for now
+        require(paymentAmount <= remainingDue, "Payment exceeds remaining due");
 
-        // Borrower must have approved this contract to transfer paymentAmount of loanToken
         IERC20(agreement.loanToken).transferFrom(msg.sender, agreement.lender, paymentAmount);
 
         agreement.amountPaid += paymentAmount;
@@ -510,32 +720,29 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
             agreement.status = LoanStatus.Repaid;
             emit LoanAgreementRepaid(agreementId);
 
-            // Return collateral if any
             if (agreement.collateralAmount > 0 && agreement.collateralToken != address(0)) {
                 IERC20(agreement.collateralToken).transfer(agreement.borrower, agreement.collateralAmount);
             }
 
-            // Call Reputation.sol to update reputation for borrower and lender
             if (address(reputationContract) != address(0)) { 
                 reputationContract.updateReputationOnLoanRepayment(agreement.borrower, agreement.lender, agreement.principalAmount);
-                // Placeholder for LayerZero OApp call if integrated
-                // if (address(reputationOApp) != address(0)) {
-                //     // Get the latest scores after local update
-                //     Reputation.ReputationProfile memory borrowerProfile = reputationContract.getReputationProfile(agreement.borrower);
-                //     Reputation.ReputationProfile memory lenderProfile = reputationContract.getReputationProfile(agreement.lender);
-                //     bytes memory adapterParams = abi.encodePacked(uint16(1), uint(200000)); // Example adapter params
-                //     // Send borrower score
-                //     // reputationOApp.sendReputationToChain{value: estimatedFee}(OTHER_CHAIN_ID, agreement.borrower, borrowerProfile.currentReputationScore, adapterParams);
-                //     // Send lender score
-                //     // reputationOApp.sendReputationToChain{value: estimatedFee}(OTHER_CHAIN_ID, agreement.lender, lenderProfile.currentReputationScore, adapterParams);
-                // }
             }
         }
     }
 
+    /**
+     * @notice Handles the default of an active loan agreement.
+     * @dev Can be called by anyone if the loan is overdue and not fully repaid.
+     *      Marks the agreement as `Defaulted`. Transfers collateral (if any) from this contract to the lender.
+     *      Calls `reputationContract.updateReputationOnLoanDefault` for the borrower.
+     *      Then, iterates through active vouches for the borrower (obtained from Reputation contract)
+     *      and calls `reputationContract.slashVouchAndReputation` for each active vouch to slash a percentage
+     *      of their stake, compensating the lender of the defaulted loan.
+     * @param agreementId The ID of the loan agreement to handle for default.
+     */
     function handleP2PDefault(bytes32 agreementId) external nonReentrant {
         LoanAgreement storage agreement = loanAgreements[agreementId];
-        require(agreement.lender != address(0), "Agreement does not exist"); // Check agreement exists
+        require(agreement.lender != address(0), "Agreement does not exist");
         require(agreement.status == LoanStatus.Active, "Loan not active for default");
         require(block.timestamp > agreement.dueDate, "Loan not yet overdue");
 
@@ -545,49 +752,38 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
         agreement.status = LoanStatus.Defaulted;
         emit LoanAgreementDefaulted(agreementId);
 
-        // Transfer collateral, if any, to the lender
         if (agreement.collateralAmount > 0 && agreement.collateralToken != address(0)) {
             IERC20(agreement.collateralToken).transfer(agreement.lender, agreement.collateralAmount);
         }
 
-        // Call Reputation.sol to update reputation and potentially slash vouches
         if (address(reputationContract) != address(0)) { 
-            // First, update the borrower's direct reputation for the default
             reputationContract.updateReputationOnLoanDefault(
                 agreement.borrower, 
                 agreement.lender, 
                 agreement.principalAmount,
-                new bytes32[](0) // Pass empty array explicitly 
+                new bytes32[](0) 
             );
-            // Placeholder for LayerZero OApp call if integrated
-            // if (address(reputationOApp) != address(0)) {
-            //     Reputation.ReputationProfile memory borrowerProfile = reputationContract.getReputationProfile(agreement.borrower);
-            //     bytes memory adapterParams = abi.encodePacked(uint16(1), uint(200000)); // Example adapter params
-            //     // reputationOApp.sendReputationToChain{value: estimatedFee}(OTHER_CHAIN_ID, agreement.borrower, borrowerProfile.currentReputationScore, adapterParams);
-            // }
 
-            // Now, handle slashing of vouches for the defaulting borrower
             Reputation.Vouch[] memory activeVouches = reputationContract.getActiveVouchesForBorrower(agreement.borrower);
             uint256 tenPercentSlashBasis = 1000; // 10.00%
 
             for (uint i = 0; i < activeVouches.length; i++) {
                 Reputation.Vouch memory currentVouch = activeVouches[i];
-                if (currentVouch.isActive && currentVouch.stakedAmount > 0) { // Double check, though getActive should ensure this
-                    uint256 slashAmount = (currentVouch.stakedAmount * tenPercentSlashBasis) / BASIS_POINTS; // 10% of current stake
-                    if (slashAmount == 0 && currentVouch.stakedAmount > 0) { // Ensure at least 1 unit is slashed if stake > 0 and 10% is < 1
+                if (currentVouch.isActive && currentVouch.stakedAmount > 0) { 
+                    uint256 slashAmount = (currentVouch.stakedAmount * tenPercentSlashBasis) / BASIS_POINTS;
+                    if (slashAmount == 0 && currentVouch.stakedAmount > 0) { 
                         slashAmount = 1; 
                     }
-                    if (slashAmount > currentVouch.stakedAmount) { // Cap at staked amount
+                    if (slashAmount > currentVouch.stakedAmount) { 
                         slashAmount = currentVouch.stakedAmount;
                     }
 
                     if (slashAmount > 0) {
-                        // P2PLending tells Reputation to slash this specific vouch
                         reputationContract.slashVouchAndReputation(
                             currentVouch.voucher,
                             agreement.borrower,
                             slashAmount,
-                            agreement.lender // Lender of the defaulted loan receives the slashed funds
+                            agreement.lender 
                         );
                     }
                 }
