@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+WE WILL NOT USE STREAMLIT HERE. We will focus on the backend, and the contracts and try to make them as good as possible. And only then will we go to the frontend.
