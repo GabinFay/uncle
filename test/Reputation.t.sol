@@ -6,29 +6,19 @@ import {UserRegistry} from "../src/UserRegistry.sol";
 import {Reputation} from "../src/Reputation.sol";
 import {P2PLending} from "../src/P2PLending.sol"; // Import P2PLending for its enums
 import {MockERC20} from "./mocks/MockERC20.sol";
-import {MockWorldIdRouter} from "./mocks/MockWorldIdRouter.sol";
+
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract ReputationTest is Test {
     UserRegistry userRegistry;
     Reputation reputation;
     MockERC20 mockDai;
-    MockWorldIdRouter mockWorldIdRouter;
 
     address owner = address(this);
     address user1 = vm.addr(1); // Generic user / borrower
     address user2 = vm.addr(2); // Generic user / lender
     address voucher1 = vm.addr(3);
     address p2pLendingContract; // Will be set in setUp
-
-    uint256 user1Nullifier = 111;
-    uint256 user2Nullifier = 222;
-    uint256 voucher1Nullifier = 333;
-
-    uint256 private constant DUMMY_ROOT = 12345;
-    uint256[8] private DUMMY_PROOF;
-    string testAppIdString = "test-app-reputation";
-    string testActionIdRegisterUserString = "test-register-reputation";
 
     event ReputationUpdated(address indexed user, int256 newScore, string reason);
     event LoanTermOutcomeRecorded(bytes32 indexed agreementId, address indexed user, int256 reputationChange, string reason, Reputation.PaymentOutcomeType outcomeType);
@@ -37,20 +27,17 @@ contract ReputationTest is Test {
     event VouchSlashed(address indexed voucher, address indexed defaultingBorrower, uint256 slashedAmount, address indexed slashedToLender);
 
     function setUp() public {
-        DUMMY_PROOF = [uint256(1), 2, 3, 4, 5, 6, 7, 8];
-        mockWorldIdRouter = new MockWorldIdRouter();
-        userRegistry = new UserRegistry(address(mockWorldIdRouter), testAppIdString, testActionIdRegisterUserString);
+        userRegistry = new UserRegistry();
         reputation = new Reputation(address(userRegistry));
 
-        p2pLendingContract = vm.addr(4); // Assign a mock address for the P2P lending contract
+        p2pLendingContract = vm.addr(4);
 
         vm.prank(owner);
         reputation.setP2PLendingContractAddress(p2pLendingContract);
 
-        mockWorldIdRouter.setShouldProofSucceed(true);
-        vm.prank(owner); userRegistry.registerUser(user1, DUMMY_ROOT, user1Nullifier, DUMMY_PROOF);
-        vm.prank(owner); userRegistry.registerUser(user2, DUMMY_ROOT, user2Nullifier, DUMMY_PROOF);
-        vm.prank(owner); userRegistry.registerUser(voucher1, DUMMY_ROOT, voucher1Nullifier, DUMMY_PROOF);
+        vm.prank(user1); userRegistry.registerUser("User1");
+        vm.prank(user2); userRegistry.registerUser("User2");
+        vm.prank(voucher1); userRegistry.registerUser("Voucher1");
 
         mockDai = new MockERC20("Mock DAI", "mDAI", 18);
         mockDai.mint(voucher1, 1000e18);

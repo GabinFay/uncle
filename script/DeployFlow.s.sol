@@ -7,11 +7,6 @@ import {Reputation} from "../src/Reputation.sol";
 import {P2PLending} from "../src/P2PLending.sol";
 
 contract DeployFlow is Script {
-    // Flow testnet World ID configuration
-    address public constant WORLD_ID_ROUTER_FLOW_TESTNET = 0x734a416F014C1497E17293a5154932c8084691C0; // Using Optimism Sepolia for now
-    string public constant APP_ID_STRING = "credease-app-v1";
-    string public constant ACTION_ID_REGISTER_USER_STRING = "credease-register-user";
-
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         require(deployerPrivateKey != 0, "PRIVATE_KEY not set in .env");
@@ -21,13 +16,9 @@ contract DeployFlow is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // 1. Deploy UserRegistry
+        // 1. Deploy UserRegistry (simplified - no World ID)
         console.log("Deploying UserRegistry...");
-        UserRegistry userRegistry = new UserRegistry(
-            WORLD_ID_ROUTER_FLOW_TESTNET,
-            APP_ID_STRING,
-            ACTION_ID_REGISTER_USER_STRING
-        );
+        UserRegistry userRegistry = new UserRegistry();
         console.log("UserRegistry deployed to:", address(userRegistry));
 
         // 2. Deploy Reputation Contract
@@ -41,7 +32,7 @@ contract DeployFlow is Script {
             address(userRegistry),
             address(reputation),
             payable(vm.addr(deployerPrivateKey)), // Use deployer as platform wallet
-            address(0) // Placeholder for IReputationOApp
+            address(0) // No cross-chain functionality for MVP
         );
         console.log("P2PLending deployed to:", address(p2pLending));
 

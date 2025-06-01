@@ -7,7 +7,7 @@ import "../src/P2PLending.sol";
 import "../src/Reputation.sol";
 import "./mocks/MockERC20.sol";
 import "openzeppelin-contracts/contracts/access/Ownable.sol";
-import "./mocks/MockWorldIdRouter.sol";
+
 // import "./mocks/MockReputationOApp.sol"; // Removed: File does not exist
 
 contract P2PLendingTest is Test {
@@ -16,24 +16,12 @@ contract P2PLendingTest is Test {
     Reputation public reputation;
     MockERC20 public mockDai;
     MockERC20 public mockUsdc;
-    MockWorldIdRouter public mockWorldIdRouter;
-    // MockReputationOApp mockReputationOApp; // Removed: File does not exist
-
     address owner;
     address borrower = vm.addr(1);
     address lender = vm.addr(4);
     address platformWallet = vm.addr(2);
     address voucher1 = vm.addr(3);
-    address reputationOAppMockAddress = address(0); // Changed from vm.addr(5) as MockReputationOApp is removed. // vm.addr(5);
-
-    uint256 borrowerNullifier = 44444;
-    uint256 lenderNullifier = 55555;
-    uint256 voucherNullifier = 66666;
-
-    uint256 private constant DUMMY_ROOT = 98765;
-    uint256[8] private DUMMY_PROOF;
-    string testAppIdString = "test-app-p2p";
-    string testActionIdRegisterUserString = "test-register-p2p";
+    address reputationOAppMockAddress = address(0);
 
     uint256 constant ONE_DAY_SECONDS = 1 days;
     uint16 constant DEFAULT_INTEREST_RATE_P2P = 1000; // 10%
@@ -57,23 +45,20 @@ contract P2PLendingTest is Test {
     event LoanTermOutcomeRecorded(bytes32 indexed agreementId, address indexed user, int256 reputationChange, string reason, Reputation.PaymentOutcomeType outcomeType);
 
     function setUp() public {
-        DUMMY_PROOF = [uint256(8), 7, 6, 5, 4, 3, 2, 1];
         owner = address(this);
 
-        mockWorldIdRouter = new MockWorldIdRouter();
-        userRegistry = new UserRegistry(address(mockWorldIdRouter), testAppIdString, testActionIdRegisterUserString);
+        userRegistry = new UserRegistry();
         reputation = new Reputation(address(userRegistry));
         
         p2pLending = new P2PLending(address(userRegistry), address(reputation), payable(platformWallet), reputationOAppMockAddress);
         
-        vm.prank(reputation.owner()); // Prank as owner of Reputation contract
+        vm.prank(reputation.owner());
         reputation.setP2PLendingContractAddress(address(p2pLending));
         vm.stopPrank();
 
-        mockWorldIdRouter.setShouldProofSucceed(true);
-        vm.prank(owner); userRegistry.registerUser(borrower, DUMMY_ROOT, borrowerNullifier, DUMMY_PROOF);
-        vm.prank(owner); userRegistry.registerUser(lender, DUMMY_ROOT, lenderNullifier, DUMMY_PROOF);
-        vm.prank(owner); userRegistry.registerUser(voucher1, DUMMY_ROOT, voucherNullifier, DUMMY_PROOF);
+        vm.prank(borrower); userRegistry.registerUser("Borrower");
+        vm.prank(lender); userRegistry.registerUser("Lender");
+        vm.prank(voucher1); userRegistry.registerUser("Voucher");
 
         mockDai = new MockERC20("Mock DAI", "mDAI", 18);
         mockDai.mint(lender, 10000 * 1e18);
