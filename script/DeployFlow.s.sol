@@ -1,0 +1,61 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+import {Script, console} from "forge-std/Script.sol";
+import {UserRegistry} from "../src/UserRegistry.sol";
+import {Reputation} from "../src/Reputation.sol";
+import {P2PLending} from "../src/P2PLending.sol";
+
+contract DeployFlow is Script {
+    // Flow testnet World ID configuration
+    address public constant WORLD_ID_ROUTER_FLOW_TESTNET = 0x734a416F014C1497E17293a5154932c8084691C0; // Using Optimism Sepolia for now
+    string public constant APP_ID_STRING = "credease-app-v1";
+    string public constant ACTION_ID_REGISTER_USER_STRING = "credease-register-user";
+
+    function run() public {
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        require(deployerPrivateKey != 0, "PRIVATE_KEY not set in .env");
+
+        console.log("Starting deployment to Flow EVM Testnet...");
+        console.log("Deployer address:", vm.addr(deployerPrivateKey));
+
+        vm.startBroadcast(deployerPrivateKey);
+
+        // 1. Deploy UserRegistry
+        console.log("Deploying UserRegistry...");
+        UserRegistry userRegistry = new UserRegistry(
+            WORLD_ID_ROUTER_FLOW_TESTNET,
+            APP_ID_STRING,
+            ACTION_ID_REGISTER_USER_STRING
+        );
+        console.log("UserRegistry deployed to:", address(userRegistry));
+
+        // 2. Deploy Reputation Contract
+        console.log("Deploying Reputation...");
+        Reputation reputation = new Reputation(address(userRegistry));
+        console.log("Reputation deployed to:", address(reputation));
+
+        // 3. Deploy P2PLending Contract
+        console.log("Deploying P2PLending...");
+        P2PLending p2pLending = new P2PLending(
+            address(userRegistry),
+            address(reputation),
+            payable(vm.addr(deployerPrivateKey)), // Use deployer as platform wallet
+            address(0) // Placeholder for IReputationOApp
+        );
+        console.log("P2PLending deployed to:", address(p2pLending));
+
+        // 4. Set P2P Lending contract address in Reputation contract
+        console.log("Setting P2PLending address in Reputation contract...");
+        reputation.setP2PLendingContractAddress(address(p2pLending));
+        console.log("Configuration complete!");
+
+        console.log("\n=== DEPLOYMENT SUMMARY ===");
+        console.log("UserRegistry:  ", address(userRegistry));
+        console.log("Reputation:    ", address(reputation));
+        console.log("P2PLending:    ", address(p2pLending));
+        console.log("==========================");
+
+        vm.stopBroadcast();
+    }
+} 

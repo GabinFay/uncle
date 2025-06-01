@@ -41,7 +41,7 @@ contract ReputationTest is Test {
         mockWorldIdRouter = new MockWorldIdRouter();
         userRegistry = new UserRegistry(address(mockWorldIdRouter), testAppIdString, testActionIdRegisterUserString);
         reputation = new Reputation(address(userRegistry));
-        
+
         p2pLendingContract = vm.addr(4); // Assign a mock address for the P2P lending contract
 
         vm.prank(owner);
@@ -192,7 +192,7 @@ contract ReputationTest is Test {
         Reputation.ReputationProfile memory initialBorrowerProfile = reputation.getReputationProfile(user1);
         int256 initialBorrowerRep = initialBorrowerProfile.currentReputationScore;
         uint256 initialBorrowerLoansRepaidOnTime = initialBorrowerProfile.loansRepaidOnTime;
-        
+
         Reputation.ReputationProfile memory initialLenderProfile = reputation.getReputationProfile(user2);
         int256 initialLenderRep = initialLenderProfile.currentReputationScore;
         uint256 initialLenderModificationsApproved = initialLenderProfile.modificationsApprovedByLender;
@@ -471,7 +471,7 @@ contract ReputationTest is Test {
 
         assertEq(mockDai.balanceOf(address(reputation)), initialReputationBalance - vouchAmount, "Reputation contract balance incorrect");
         assertEq(mockDai.balanceOf(voucher1), initialVoucherBalance + vouchAmount, "Voucher balance incorrect");
-        
+
         Reputation.ReputationProfile memory finalVoucherProfile = reputation.getReputationProfile(voucher1);
         assertEq(finalVoucherProfile.vouchingStakeAmount, 0, "Voucher stake amount not zeroed");
     }
