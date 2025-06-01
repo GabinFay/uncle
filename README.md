@@ -116,7 +116,7 @@ Uncle is more than a lending protocol. It’s a financial recovery and growth pl
 * [Demo Video]()
 * [Figma File](https://www.figma.com/design/uYum04bGPBW9bVuqS045QZ/Uncle?node-id=0-1&t=qXRuUNkoQqHe436x-1)
 * [Figma Prototype](https://www.figma.com/proto/uYum04bGPBW9bVuqS045QZ/Uncle?page-id=0%3A1&node-id=14-161&p=f&viewport=335%2C165%2C0.11&t=iWm2Ft9EzXWVqJr2-1&scaling=min-zoom&content-scaling=fixed&starting-point-node-id=28%3A235)
-* [Presentation](https://www.figma.com/slides/Q8Ikj2IC9SBsJmcAWaPNVd/Uncle?node-id=1-42&t=SeRkpxpXmbMrvgit-1)
+* [Presentation](https://www.figma.com/deck/Q8Ikj2IC9SBsJmcAWaPNVd/Uncle?node-id=1-42&t=MlfTEYhX6qO6SSc3-1&scaling=min-zoom&content-scaling=fixed&page-id=0%3A1)
 
 ---
 
