@@ -33,3 +33,5 @@ coverage.json
 __pycache__/ 
 
 .cursor
+md_files/
+deprec

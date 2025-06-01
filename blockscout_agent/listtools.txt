@@ -1,0 +1,887 @@
+Found 39 tools from Blockscout MCP Server:
+
+Tool 1: search
+Definition:
+{
+  "name": "search",
+  "description": "Search for addresses, transactions, tokens, etc",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "q": {
+        "type": "string",
+        "description": "Search query"
+      }
+    },
+    "required": [
+      "q"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 2: get_transactions
+Definition:
+{
+  "name": "get_transactions",
+  "description": "Get list of transactions with optional filters",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "filter": {
+        "type": "string",
+        "description": "Filter: pending | validated"
+      },
+      "type": {
+        "type": "string",
+        "description": "Transaction type: token_transfer,contract_creation,contract_call,coin_transfer,token_creation"
+      },
+      "method": {
+        "type": "string",
+        "description": "Method: approve,transfer,multicall,mint,commit"
+      }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 3: get_blocks
+Definition:
+{
+  "name": "get_blocks",
+  "description": "Get list of blocks",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "type": {
+        "type": "string",
+        "description": "Block type: block | uncle | reorg"
+      }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 4: get_token_transfers
+Definition:
+{
+  "name": "get_token_transfers",
+  "description": "Get list of token transfers",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 5: get_stats
+Definition:
+{
+  "name": "get_stats",
+  "description": "Get network statistics",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 6: get_transaction_info
+Definition:
+{
+  "name": "get_transaction_info",
+  "description": "Get detailed information about a specific transaction",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "transaction_hash": {
+        "type": "string",
+        "description": "Transaction hash"
+      }
+    },
+    "required": [
+      "transaction_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 7: get_transaction_token_transfers
+Definition:
+{
+  "name": "get_transaction_token_transfers",
+  "description": "Get token transfers for a specific transaction",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "transaction_hash": {
+        "type": "string",
+        "description": "Transaction hash"
+      },
+      "type": {
+        "type": "string",
+        "description": "Token type: ERC-20,ERC-721,ERC-1155"
+      }
+    },
+    "required": [
+      "transaction_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 8: get_transaction_internal_txs
+Definition:
+{
+  "name": "get_transaction_internal_txs",
+  "description": "Get internal transactions for a specific transaction",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "transaction_hash": {
+        "type": "string",
+        "description": "Transaction hash"
+      }
+    },
+    "required": [
+      "transaction_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 9: get_transaction_logs
+Definition:
+{
+  "name": "get_transaction_logs",
+  "description": "Get logs for a specific transaction",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "transaction_hash": {
+        "type": "string",
+        "description": "Transaction hash"
+      }
+    },
+    "required": [
+      "transaction_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 10: get_block_info
+Definition:
+{
+  "name": "get_block_info",
+  "description": "Get detailed information about a specific block",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "block_number_or_hash": {
+        "type": "string",
+        "description": "Block number or hash"
+      }
+    },
+    "required": [
+      "block_number_or_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 11: get_block_transactions
+Definition:
+{
+  "name": "get_block_transactions",
+  "description": "Get transactions for a specific block",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "block_number_or_hash": {
+        "type": "string",
+        "description": "Block number or hash"
+      }
+    },
+    "required": [
+      "block_number_or_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 12: get_address_info
+Definition:
+{
+  "name": "get_address_info",
+  "description": "Get detailed information about an address",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 13: get_address_token_transfers
+Definition:
+{
+  "name": "get_address_token_transfers",
+  "description": "Get token transfers for an address",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      },
+      "type": {
+        "type": "string",
+        "description": "Token type: ERC-20,ERC-721,ERC-1155"
+      },
+      "filter": {
+        "type": "string",
+        "description": "Filter: to | from"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 14: get_token_info
+Definition:
+{
+  "name": "get_token_info",
+  "description": "Get detailed information about a token",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Token contract address"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 15: get_token_holders
+Definition:
+{
+  "name": "get_token_holders",
+  "description": "Get list of token holders",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Token contract address"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 16: get_internal_transactions
+Definition:
+{
+  "name": "get_internal_transactions",
+  "description": "Get list of internal transactions",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 17: get_indexing_status
+Definition:
+{
+  "name": "get_indexing_status",
+  "description": "Get indexing status",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 18: get_transaction_raw_trace
+Definition:
+{
+  "name": "get_transaction_raw_trace",
+  "description": "Get transaction raw trace",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "transaction_hash": {
+        "type": "string",
+        "description": "Transaction hash"
+      }
+    },
+    "required": [
+      "transaction_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 19: get_transaction_state_changes
+Definition:
+{
+  "name": "get_transaction_state_changes",
+  "description": "Get transaction state changes",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "transaction_hash": {
+        "type": "string",
+        "description": "Transaction hash"
+      }
+    },
+    "required": [
+      "transaction_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 20: get_transaction_summary
+Definition:
+{
+  "name": "get_transaction_summary",
+  "description": "Get human-readable transaction summary",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "transaction_hash": {
+        "type": "string",
+        "description": "Transaction hash"
+      }
+    },
+    "required": [
+      "transaction_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 21: get_block_withdrawals
+Definition:
+{
+  "name": "get_block_withdrawals",
+  "description": "Get block withdrawals",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "block_number_or_hash": {
+        "type": "string",
+        "description": "Block number or hash"
+      }
+    },
+    "required": [
+      "block_number_or_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 22: get_address_counters
+Definition:
+{
+  "name": "get_address_counters",
+  "description": "Get address counters",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 23: get_address_internal_transactions
+Definition:
+{
+  "name": "get_address_internal_transactions",
+  "description": "Get address internal transactions",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      },
+      "filter": {
+        "type": "string",
+        "description": "Filter: to | from"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 24: get_address_logs
+Definition:
+{
+  "name": "get_address_logs",
+  "description": "Get address logs",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 25: get_address_coin_balance_history
+Definition:
+{
+  "name": "get_address_coin_balance_history",
+  "description": "Get address coin balance history",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 26: get_address_coin_balance_history_by_day
+Definition:
+{
+  "name": "get_address_coin_balance_history_by_day",
+  "description": "Get address coin balance history by day",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 27: get_smart_contracts
+Definition:
+{
+  "name": "get_smart_contracts",
+  "description": "Get verified smart contracts",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "q": {
+        "type": "string",
+        "description": "Search query"
+      },
+      "filter": {
+        "type": "string",
+        "description": "Filter: vyper | solidity | yul"
+      }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 28: get_smart_contract
+Definition:
+{
+  "name": "get_smart_contract",
+  "description": "Get smart contract",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 29: get_addresses
+Definition:
+{
+  "name": "get_addresses",
+  "description": "Get addresses",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 30: get_address_transactions
+Definition:
+{
+  "name": "get_address_transactions",
+  "description": "Get transactions for an address",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      },
+      "filter": {
+        "type": "string",
+        "description": "Filter: to | from"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 31: get_address_token_balances
+Definition:
+{
+  "name": "get_address_token_balances",
+  "description": "Get token balances for an address",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 32: get_address_tokens
+Definition:
+{
+  "name": "get_address_tokens",
+  "description": "Get tokens for an address",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      },
+      "type": {
+        "type": "string",
+        "description": "Token type: ERC-20,ERC-721,ERC-1155"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 33: get_address_withdrawals
+Definition:
+{
+  "name": "get_address_withdrawals",
+  "description": "Get withdrawals for an address",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 34: get_address_nft
+Definition:
+{
+  "name": "get_address_nft",
+  "description": "Get NFTs for an address",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      },
+      "type": {
+        "type": "string",
+        "description": "Token type: ERC-721,ERC-404,ERC-1155"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 35: get_address_nft_collections
+Definition:
+{
+  "name": "get_address_nft_collections",
+  "description": "Get NFT collections for an address",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Address hash"
+      },
+      "type": {
+        "type": "string",
+        "description": "Token type: ERC-721,ERC-404,ERC-1155"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 36: get_tokens
+Definition:
+{
+  "name": "get_tokens",
+  "description": "Get tokens",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "q": {
+        "type": "string",
+        "description": "Search query for token name or symbol"
+      },
+      "type": {
+        "type": "string",
+        "description": "Token type: ERC-20,ERC-721,ERC-1155"
+      }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 37: get_token_transfers_list
+Definition:
+{
+  "name": "get_token_transfers_list",
+  "description": "Get token transfers list",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Token contract address"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 38: get_token_counters
+Definition:
+{
+  "name": "get_token_counters",
+  "description": "Get token counters",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address_hash": {
+        "type": "string",
+        "description": "Token contract address"
+      }
+    },
+    "required": [
+      "address_hash"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+
+Tool 39: get_withdrawals
+Definition:
+{
+  "name": "get_withdrawals",
+  "description": "Get withdrawals",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
+
+================================================================================
+

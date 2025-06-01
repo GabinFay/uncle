@@ -1,0 +1,5 @@
+# google-genai
+# google-adk
+python-dotenv
+openai-agents
+openai 
