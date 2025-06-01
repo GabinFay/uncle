@@ -99,7 +99,7 @@ This repository contains multiple components that work together to create the Un
   - Mobile-optimized UI components
 
 ### 🎨 UI Reference Implementations
-- **`uncle/`** - Original UI design prototype
+- **[`uncle/`](https://github.com/1uizeth/uncle)** - Original UI design prototype
   - Pure design implementation showing intended UX
   - Reference for visual styling and component structure
 
