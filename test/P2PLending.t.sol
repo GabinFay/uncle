@@ -42,7 +42,7 @@ contract P2PLendingTest is Test {
     event LoanOfferCreated(bytes32 indexed offerId, address indexed lender, uint256 amount, address token, uint256 interestRate, uint256 duration);
     event LoanRequestCreated(bytes32 indexed requestId, address indexed borrower, uint256 amount, address token, uint256 proposedInterestRate, uint256 proposedDuration);
     event LoanAgreementCreated(bytes32 indexed agreementId, address indexed lender, address indexed borrower, uint256 amount, address token, uint256 interestRate, uint256 duration, uint256 startTime, uint256 dueDate);
-    event LoanRepaymentMade(bytes32 indexed agreementId, uint256 amountPaid, uint256 totalPaid);
+    event LoanRepayment(bytes32 indexed agreementId, address indexed payer, uint256 amountPaidThisTime, uint256 newTotalAmountPaid, uint256 newRemainingBalance, P2PLending.LoanStatus newStatus);
     event LoanAgreementRepaid(bytes32 indexed agreementId);
     event LoanAgreementDefaulted(bytes32 indexed agreementId);
     event VouchSlashed(address indexed voucher, address indexed borrower, uint256 amount, address indexed lender);
@@ -244,7 +244,7 @@ contract P2PLendingTest is Test {
         vm.stopPrank();
     }
 
-    function test_RepayP2PLoan_Full_Success_NoCollateral() public {
+    function test_RepayLoan_Full_Success_NoCollateral() public {
         vm.startPrank(lender);
         bytes32 offerId = p2pLending.createLoanOffer(100e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 days, 0, address(0));
         mockDai.approve(address(p2pLending), 100e18);
@@ -259,8 +259,8 @@ contract P2PLendingTest is Test {
         
         vm.startPrank(borrower);
         mockDai.approve(address(p2pLending), totalDue);
-        vm.expectEmit(false, true, true, true, address(p2pLending));
-        emit LoanRepaymentMade(agreementId, totalDue, totalDue);
+        vm.expectEmit(true, true, false, false, address(p2pLending));
+        emit LoanRepayment(agreementId, borrower, totalDue, totalDue, 0, P2PLending.LoanStatus.Repaid);
         vm.expectEmit(false, false, false, true, address(p2pLending));
         emit LoanAgreementRepaid(agreementId);
         vm.expectEmit(true, true, false, true, address(reputation));
@@ -268,7 +268,7 @@ contract P2PLendingTest is Test {
         vm.expectEmit(true, true, false, true, address(reputation));
         emit ReputationUpdated(lender, reputation.REPUTATION_POINTS_LENT_SUCCESSFULLY(), "Loan lent and repaid");
 
-        p2pLending.repayP2PLoan(agreementId, totalDue);
+        p2pLending.repayLoan(agreementId, totalDue);
         vm.stopPrank();
 
         assertEq(mockDai.balanceOf(borrower), borrowerDaiBeforeRepay - totalDue);
@@ -281,7 +281,7 @@ contract P2PLendingTest is Test {
         assertEq(borrowerProfile.currentReputationScore, reputation.REPUTATION_POINTS_REPAID());
     }
 
-    function test_RepayP2PLoan_Partial_Then_Full_Success_WithCollateral() public {
+    function test_RepayLoan_Partial_Then_Full_Success_WithCollateral() public {
         uint256 collateralAmount = 25 * 1e6;
         uint256 loanPrincipal = 50e18;
         vm.startPrank(lender);
@@ -300,7 +300,9 @@ contract P2PLendingTest is Test {
         
         vm.startPrank(borrower);
         mockDai.approve(address(p2pLending), partialPayment);
-        p2pLending.repayP2PLoan(agreementId, partialPayment);
+        vm.expectEmit(true, true, false, false, address(p2pLending));
+        emit LoanRepayment(agreementId, borrower, partialPayment, partialPayment, totalDue - partialPayment, P2PLending.LoanStatus.Active);
+        p2pLending.repayLoan(agreementId, partialPayment);
         vm.stopPrank();
 
         agreement = p2pLending.getLoanAgreementDetails(agreementId);
@@ -310,11 +312,13 @@ contract P2PLendingTest is Test {
         uint256 remainingPayment = totalDue - partialPayment;
         vm.startPrank(borrower);
         mockDai.approve(address(p2pLending), remainingPayment);
+        vm.expectEmit(true, true, false, false, address(p2pLending));
+        emit LoanRepayment(agreementId, borrower, remainingPayment, totalDue, 0, P2PLending.LoanStatus.Repaid);
         vm.expectEmit(true, true, false, true, address(reputation));
         emit ReputationUpdated(borrower, reputation.REPUTATION_POINTS_REPAID(), "Loan repaid"); 
         vm.expectEmit(true, true, false, true, address(reputation));
         emit ReputationUpdated(lender, reputation.REPUTATION_POINTS_LENT_SUCCESSFULLY(), "Loan lent and repaid");
-        p2pLending.repayP2PLoan(agreementId, remainingPayment);
+        p2pLending.repayLoan(agreementId, remainingPayment);
         vm.stopPrank();
 
         agreement = p2pLending.getLoanAgreementDetails(agreementId);
@@ -324,7 +328,7 @@ contract P2PLendingTest is Test {
         assertEq(mockUsdc.balanceOf(address(p2pLending)), contractUsdcBeforeReturn - collateralAmount);
     }
 
-    function test_RevertIf_RepayP2PLoan_NotBorrower() public {
+    function test_RevertIf_RepayLoan_NotBorrower() public {
         vm.startPrank(lender);
         bytes32 offerId = p2pLending.createLoanOffer(10e18, address(mockDai), 500, 7 days, 0, address(0));
         mockDai.approve(address(p2pLending), 10e18);
@@ -335,11 +339,11 @@ contract P2PLendingTest is Test {
         vm.startPrank(lender);
         mockDai.approve(address(p2pLending), 1e18);
         vm.expectRevert(bytes("Only borrower can repay"));
-        p2pLending.repayP2PLoan(agreementId, 1e18);
+        p2pLending.repayLoan(agreementId, 1e18);
         vm.stopPrank();
     }
 
-    function test_RevertIf_RepayP2PLoan_Overpayment() public {
+    function test_RevertIf_RepayLoan_Overpayment() public {
         vm.startPrank(lender);
         bytes32 offerId = p2pLending.createLoanOffer(10e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 days, 0, address(0));
         mockDai.approve(address(p2pLending), 10e18);
@@ -353,7 +357,7 @@ contract P2PLendingTest is Test {
         vm.startPrank(borrower);
         mockDai.approve(address(p2pLending), overPayment);
         vm.expectRevert(bytes("Payment exceeds remaining due"));
-        p2pLending.repayP2PLoan(agreementId, overPayment);
+        p2pLending.repayLoan(agreementId, overPayment);
         vm.stopPrank();
     }
 
@@ -495,7 +499,7 @@ contract P2PLendingTest is Test {
         P2PLending.LoanAgreement memory agreement = p2pLending.getLoanAgreementDetails(agreementId);
         uint256 totalDue = (agreement.principalAmount * (BASIS_POINTS_TEST + agreement.interestRate)) / BASIS_POINTS_TEST;
         mockDai.approve(address(p2pLending), totalDue);
-        p2pLending.repayP2PLoan(agreementId, totalDue);
+        p2pLending.repayLoan(agreementId, totalDue);
         vm.stopPrank();
         vm.warp(block.timestamp + 8 days);
         vm.expectRevert(bytes("Loan not active for default"));
@@ -659,7 +663,7 @@ contract P2PLendingTest is Test {
         P2PLending.LoanAgreement memory agreement = p2pLending.getLoanAgreementDetails(agreementId);
         uint256 totalDue = (agreement.principalAmount * (BASIS_POINTS_TEST + agreement.interestRate)) / BASIS_POINTS_TEST;
         mockDai.approve(address(p2pLending), totalDue);
-        p2pLending.repayP2PLoan(agreementId, totalDue); // Loan is now Repaid
+        p2pLending.repayLoan(agreementId, totalDue); // Loan is now Repaid
 
         // Test: Borrower attempts to modify the Repaid loan
         vm.expectRevert(bytes("P2PL: Loan not active/overdue"));
@@ -720,5 +724,193 @@ contract P2PLendingTest is Test {
         vm.expectRevert(bytes("P2PL: No pending modification"));
         p2pLending.respondToPaymentModification(agreementId, true);
         vm.stopPrank();
+    }
+
+    // --- New tests for Enhanced Partial Repayment ---
+
+    function test_RepayLoan_Partial_StatusRemainsActive() public {
+        // 1. Setup Loan
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(100e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 * ONE_DAY_SECONDS, 0, address(0));
+        mockDai.approve(address(p2pLending), 100e18);
+        vm.stopPrank();
+        vm.startPrank(borrower);
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementBefore = p2pLending.getLoanAgreementDetails(agreementId);
+        uint256 totalDue = (agreementBefore.principalAmount * (BASIS_POINTS_TEST + agreementBefore.interestRate)) / BASIS_POINTS_TEST;
+        uint256 partialPayment = totalDue / 3;
+
+        // 2. Borrower makes partial payment (loan still active)
+        vm.startPrank(borrower);
+        mockDai.approve(address(p2pLending), partialPayment);
+        vm.expectEmit(true, true, false, false, address(p2pLending));
+        emit LoanRepayment(agreementId, borrower, partialPayment, partialPayment, totalDue - partialPayment, P2PLending.LoanStatus.Active);
+        p2pLending.repayLoan(agreementId, partialPayment);
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementAfter = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(agreementAfter.amountPaid, partialPayment);
+        assertEq(uint(agreementAfter.status), uint(P2PLending.LoanStatus.Active));
+    }
+
+    function test_RepayLoan_Partial_StatusBecomesOverdue() public {
+        // 1. Setup Loan
+        uint256 loanDuration = 2 * ONE_DAY_SECONDS;
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(100e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, loanDuration, 0, address(0));
+        mockDai.approve(address(p2pLending), 100e18);
+        vm.stopPrank();
+        vm.startPrank(borrower);
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementBefore = p2pLending.getLoanAgreementDetails(agreementId);
+        uint256 totalDue = (agreementBefore.principalAmount * (BASIS_POINTS_TEST + agreementBefore.interestRate)) / BASIS_POINTS_TEST;
+        uint256 partialPayment = totalDue / 3;
+
+        // Warp time past due date
+        vm.warp(block.timestamp + loanDuration + ONE_DAY_SECONDS);
+
+        // 2. Borrower makes partial payment (loan becomes Overdue)
+        vm.startPrank(borrower);
+        mockDai.approve(address(p2pLending), partialPayment);
+        vm.expectEmit(true, true, false, false, address(p2pLending));
+        emit LoanRepayment(agreementId, borrower, partialPayment, partialPayment, totalDue - partialPayment, P2PLending.LoanStatus.Overdue);
+        p2pLending.repayLoan(agreementId, partialPayment);
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementAfter = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(agreementAfter.amountPaid, partialPayment);
+        assertEq(uint(agreementAfter.status), uint(P2PLending.LoanStatus.Overdue));
+    }
+
+    function test_RepayLoan_AgreedPartialPayment_Success() public {
+        // 1. Setup Loan & Partial Payment Agreement
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(100e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 * ONE_DAY_SECONDS, 0, address(0));
+        mockDai.approve(address(p2pLending), 100e18);
+        vm.stopPrank();
+        vm.startPrank(borrower);
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementBefore = p2pLending.getLoanAgreementDetails(agreementId);
+        uint256 totalDue = (agreementBefore.principalAmount * (BASIS_POINTS_TEST + agreementBefore.interestRate)) / BASIS_POINTS_TEST;
+        uint256 agreedPartialAmount = totalDue / 2;
+
+        vm.startPrank(borrower);
+        p2pLending.requestPaymentModification(agreementId, P2PLending.PaymentModificationType.PartialPaymentAgreement, agreedPartialAmount);
+        vm.stopPrank();
+        vm.startPrank(lender);
+        p2pLending.respondToPaymentModification(agreementId, true);
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementAfterApproval = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(uint(agreementAfterApproval.status), uint(P2PLending.LoanStatus.Active_PartialPaymentAgreed));
+        assertTrue(agreementAfterApproval.modificationApprovedByLender);
+        assertEq(agreementAfterApproval.requestedModificationValue, agreedPartialAmount);
+
+        // 2. Borrower pays the agreed partial amount
+        vm.startPrank(borrower);
+        mockDai.approve(address(p2pLending), agreedPartialAmount);
+        vm.expectEmit(true, true, false, false, address(p2pLending));
+        // Status should become Active as it's not fully paid and assuming due date not passed for this test
+        emit LoanRepayment(agreementId, borrower, agreedPartialAmount, agreedPartialAmount, totalDue - agreedPartialAmount, P2PLending.LoanStatus.Active);
+        p2pLending.repayLoan(agreementId, agreedPartialAmount);
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementAfterPayment = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(agreementAfterPayment.amountPaid, agreedPartialAmount);
+        assertEq(uint(agreementAfterPayment.status), uint(P2PLending.LoanStatus.Active));
+        assertFalse(agreementAfterPayment.modificationApprovedByLender); // Check flags are reset
+        assertEq(agreementAfterPayment.requestedModificationValue, 0);    // Check flags are reset
+    }
+
+    function test_RepayLoan_AgreedPartialPayment_IncorrectAmount() public {
+        // 1. Setup Loan & Partial Payment Agreement
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(100e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 * ONE_DAY_SECONDS, 0, address(0));
+        mockDai.approve(address(p2pLending), 100e18);
+        vm.stopPrank();
+        vm.startPrank(borrower);
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementBefore = p2pLending.getLoanAgreementDetails(agreementId);
+        uint256 totalDue = (agreementBefore.principalAmount * (BASIS_POINTS_TEST + agreementBefore.interestRate)) / BASIS_POINTS_TEST;
+        uint256 agreedPartialAmount = totalDue / 2;
+        uint256 incorrectPaymentAmount = agreedPartialAmount / 2; // Borrower pays less than agreed
+
+        vm.startPrank(borrower);
+        p2pLending.requestPaymentModification(agreementId, P2PLending.PaymentModificationType.PartialPaymentAgreement, agreedPartialAmount);
+        vm.stopPrank();
+        vm.startPrank(lender);
+        p2pLending.respondToPaymentModification(agreementId, true);
+        vm.stopPrank();
+
+        // 2. Borrower pays an amount DIFFERENT from the agreed partial amount
+        vm.startPrank(borrower);
+        mockDai.approve(address(p2pLending), incorrectPaymentAmount);
+        vm.expectEmit(true, true, false, false, address(p2pLending));
+        emit LoanRepayment(agreementId, borrower, incorrectPaymentAmount, incorrectPaymentAmount, totalDue - incorrectPaymentAmount, P2PLending.LoanStatus.Active);
+        p2pLending.repayLoan(agreementId, incorrectPaymentAmount);
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementAfterPayment = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(agreementAfterPayment.amountPaid, incorrectPaymentAmount);
+        assertEq(uint(agreementAfterPayment.status), uint(P2PLending.LoanStatus.Active)); // Still active
+        assertFalse(agreementAfterPayment.modificationApprovedByLender); // Flags reset
+        assertEq(agreementAfterPayment.requestedModificationValue, 0);    // Flags reset
+    }
+
+    function test_RepayLoan_MultiplePartials_ThenFullRepayment() public {
+        // 1. Setup Loan
+        vm.startPrank(lender);
+        bytes32 offerId = p2pLending.createLoanOffer(90e18, address(mockDai), DEFAULT_INTEREST_RATE_P2P, 7 * ONE_DAY_SECONDS, 0, address(0));
+        mockDai.approve(address(p2pLending), 90e18);
+        vm.stopPrank();
+        vm.startPrank(borrower);
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementBefore = p2pLending.getLoanAgreementDetails(agreementId);
+        uint256 totalDue = (agreementBefore.principalAmount * (BASIS_POINTS_TEST + agreementBefore.interestRate)) / BASIS_POINTS_TEST;
+        uint256 payment1 = totalDue / 3;
+        uint256 payment2 = totalDue / 3;
+        uint256 payment3 = totalDue - payment1 - payment2;
+
+        // 2. First partial payment
+        vm.startPrank(borrower);
+        mockDai.approve(address(p2pLending), payment1);
+        p2pLending.repayLoan(agreementId, payment1);
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementAfter1 = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(agreementAfter1.amountPaid, payment1);
+        assertEq(uint(agreementAfter1.status), uint(P2PLending.LoanStatus.Active));
+
+        // 3. Second partial payment
+        vm.startPrank(borrower);
+        mockDai.approve(address(p2pLending), payment2);
+        p2pLending.repayLoan(agreementId, payment2);
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementAfter2 = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(agreementAfter2.amountPaid, payment1 + payment2);
+        assertEq(uint(agreementAfter2.status), uint(P2PLending.LoanStatus.Active));
+
+        // 4. Final payment (full repayment)
+        vm.startPrank(borrower);
+        mockDai.approve(address(p2pLending), payment3);
+        vm.expectEmit(true, true, false, false, address(p2pLending));
+        emit LoanRepayment(agreementId, borrower, payment3, totalDue, 0, P2PLending.LoanStatus.Repaid);
+        p2pLending.repayLoan(agreementId, payment3);
+        vm.stopPrank();
+
+        P2PLending.LoanAgreement memory agreementAfter3 = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(agreementAfter3.amountPaid, totalDue);
+        assertEq(uint(agreementAfter3.status), uint(P2PLending.LoanStatus.Repaid));
     }
 } 

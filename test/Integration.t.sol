@@ -130,7 +130,7 @@ contract IntegrationTest is Test {
         uint256 totalDue = (agreement.principalAmount * (p2pLending.BASIS_POINTS() + agreement.interestRate)) / p2pLending.BASIS_POINTS();
         vm.startPrank(user1);
         mockDAI.approve(address(p2pLending), totalDue);
-        p2pLending.repayP2PLoan(agreementId, totalDue);
+        p2pLending.repayLoan(agreementId, totalDue);
         vm.stopPrank();
 
         P2PLending.LoanAgreement memory agreementAfterRepay = p2pLending.getLoanAgreementDetails(agreementId);

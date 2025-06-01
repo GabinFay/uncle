@@ -268,11 +268,14 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
     event LoanAgreementCreated(bytes32 indexed agreementId, address indexed lender, address indexed borrower, uint256 amount, address token, uint256 interestRate, uint256 duration, uint256 startTime, uint256 dueDate);
     /**
      * @notice Emitted when a repayment is made on a loan agreement.
-     * @param agreementId ID of the loan agreement.
-     * @param amountPaid The amount paid in this transaction.
-     * @param totalPaid The new total amount paid towards the loan so far.
+     * @param agreementId The ID of the loan agreement.
+     * @param payer The address of the user making the payment (borrower).
+     * @param amountPaidThisTime The amount paid in the current transaction.
+     * @param newTotalAmountPaid The new cumulative total amount paid towards the loan.
+     * @param newRemainingBalance The outstanding balance after this payment.
+     * @param newStatus The status of the loan agreement after this payment.
      */
-    event LoanRepaymentMade(bytes32 indexed agreementId, uint256 amountPaid, uint256 totalPaid);
+    event LoanRepayment(bytes32 indexed agreementId, address indexed payer, uint256 amountPaidThisTime, uint256 newTotalAmountPaid, uint256 newRemainingBalance, LoanStatus newStatus);
     /**
      * @notice Emitted when a loan agreement is fully repaid.
      * @param agreementId ID of the fully repaid loan agreement.
@@ -743,23 +746,51 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
      * @param agreementId The ID of the loan agreement to repay.
      * @param paymentAmount The amount of `loanToken` to repay.
      */
-    function repayP2PLoan(bytes32 agreementId, uint256 paymentAmount) external nonReentrant {
+    function repayLoan(bytes32 agreementId, uint256 paymentAmount) external nonReentrant {
         LoanAgreement storage agreement = loanAgreements[agreementId];
         require(agreement.borrower == msg.sender, "Only borrower can repay");
-        require(agreement.status == LoanStatus.Active, "Loan not active");
+        require(
+            agreement.status == LoanStatus.Active ||
+            agreement.status == LoanStatus.Overdue ||
+            agreement.status == LoanStatus.Active_PartialPaymentAgreed,
+            "P2PL: Loan not in repayable state"
+        );
         require(paymentAmount > 0, "Payment amount must be positive");
 
         uint256 totalDue = _calculateTotalDue(agreement);
-        uint256 remainingDue = totalDue - agreement.amountPaid;
-        require(paymentAmount <= remainingDue, "Payment exceeds remaining due");
+        uint256 remainingDueBeforePayment = totalDue - agreement.amountPaid;
+        require(paymentAmount <= remainingDueBeforePayment, "Payment exceeds remaining due");
 
         IERC20(agreement.loanToken).transferFrom(msg.sender, agreement.lender, paymentAmount);
 
-        agreement.amountPaid += paymentAmount;
-        emit LoanRepaymentMade(agreementId, paymentAmount, agreement.amountPaid);
+        // If a partial payment agreement was active, its specific terms are now considered processed by this payment attempt.
+        // Reset modification flags regardless of whether the exact agreed amount was paid.
+        if (agreement.status == LoanStatus.Active_PartialPaymentAgreed) {
+            agreement.modificationApprovedByLender = false;
+            agreement.requestedModificationValue = 0; 
+            // requestedModificationType can remain for history or be reset to a default.
+            // For now, leaving it as is.
+        }
 
-        if (agreement.amountPaid >= totalDue) {
-            agreement.status = LoanStatus.Repaid;
+        agreement.amountPaid += paymentAmount;
+        LoanStatus newStatus;
+        if (agreement.amountPaid >= totalDue) { // Fully paid
+            newStatus = LoanStatus.Repaid;
+        } else if (block.timestamp > agreement.dueDate) { // Partially paid, and past due date
+            newStatus = LoanStatus.Overdue;
+        } else { // Partially paid, but still within due date
+            newStatus = LoanStatus.Active;
+        }
+
+        uint256 newRemainingBalance = totalDue - agreement.amountPaid;
+        // Ensure newRemainingBalance is not negative if totalDue itself was 0 (e.g. 0 principal loan, unlikely but for safety)
+        if (agreement.amountPaid > totalDue) { // Should be caught by 'paymentAmount <= remainingDueBeforePayment'
+            newRemainingBalance = 0;
+        }
+
+        emit LoanRepayment(agreementId, msg.sender, paymentAmount, agreement.amountPaid, newRemainingBalance, newStatus);
+
+        if (newStatus == LoanStatus.Repaid) {
             emit LoanAgreementRepaid(agreementId);
 
             if (agreement.collateralAmount > 0 && agreement.collateralToken != address(0)) {
@@ -770,6 +801,7 @@ contract P2PLending is Ownable, ReentrancyGuard { // Renamed from LoanContract
                 reputationContract.updateReputationOnLoanRepayment(agreement.borrower, agreement.lender, agreement.principalAmount);
             }
         }
+        agreement.status = newStatus; // Set the final status
     }
 
     /**
