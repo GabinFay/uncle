@@ -64,6 +64,10 @@ This repository contains multiple components that work together to create the Un
   - Smart contracts deployed on Flow EVM Testnet
   - Full-featured React frontend with Web3 integration
   - P2P lending protocol implementation
+- **🚀 [Uncle Credit Standalone Repo](https://github.com/GabinFay/uncle-credit-p2p-lending)** - Complete P2P lending platform
+  - Deployed contracts on Flow EVM Testnet with explorer links
+  - Beautiful production UI with no auto-wallet connection
+  - Comprehensive documentation and setup instructions
 
 ### 🔍 Blockscout Integration
 - **`blockscout-mcp-server/`** - Model Context Protocol server for Blockscout API integration
