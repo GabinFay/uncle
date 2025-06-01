@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./UserRegistry.sol";
-// import "./P2PLending.sol"; // Interface might be better if only enums/structs needed
+import "./P2PLending.sol"; // Import P2PLending to use its enums
 import "forge-std/console.sol"; // For debugging, remove in production
 
 interface IP2PLending { // Define an interface for P2PLending if needed for specific calls from Reputation
@@ -26,7 +26,8 @@ contract Reputation is Ownable, ReentrancyGuard {
         address userAddress;
         uint256 loansTaken;
         uint256 loansGiven;
-        uint256 loansRepaidOnTime;
+        uint256 loansRepaidOnTime; // Specifically on original or extended due date
+        uint256 loansRepaidLateGrace; // Repaid late but before default, without formal extension
         uint256 loansDefaulted;
         uint256 totalValueBorrowed;
         uint256 totalValueLent;
@@ -34,6 +35,8 @@ contract Reputation is Ownable, ReentrancyGuard {
         uint256 vouchingStakeAmount; // Total amount user has actively staked for others
         uint256 timesVouchedForOthers;
         uint256 timesDefaultedAsVoucher; // Times a user they vouched for defaulted
+        uint256 modificationsApprovedByLender; // Times this lender approved a modification
+        uint256 modificationsRejectedByLender; // Times this lender rejected a modification
     }
 
     struct Vouch {
@@ -49,12 +52,40 @@ contract Reputation is Ownable, ReentrancyGuard {
     mapping(address => Vouch[]) public userVouchesGiven; // voucher => list of all vouches they made (active and inactive)
     mapping(address => Vouch[]) public userVouchesReceived; // borrower => list of all vouches they received (active and inactive)
 
-    int256 public constant REPUTATION_POINTS_REPAID = 10;
+    // Borrower Reputation Points
+    int256 public constant REPUTATION_POINTS_REPAID_ON_TIME_ORIGINAL = 10;
+    int256 public constant REPUTATION_POINTS_REPAID_LATE_GRACE = 3; // Paid after original due date but before default, no formal extension
+    int256 public constant REPUTATION_POINTS_REPAID_ON_TIME_AFTER_EXTENSION = 7;
+    int256 public constant REPUTATION_POINTS_REPAID_LATE_AFTER_EXTENSION = 2;
+    int256 public constant REPUTATION_POINTS_REPAID_WITH_PARTIAL_AGREEMENT_MET = 8; // Assumes this led to full repayment on agreed terms
     int256 public constant REPUTATION_POINTS_DEFAULTED = -50;
+
+    // Lender Reputation Points
+    int256 public constant REPUTATION_POINTS_LENT_SUCCESSFULLY_ON_TIME_ORIGINAL = 5;
+    int256 public constant REPUTATION_POINTS_LENT_SUCCESSFULLY_AFTER_MODIFICATION = 3; // If repaid after modification
+    int256 public constant REPUTATION_POINTS_LENDER_APPROVED_EXTENSION = 2;
+    int256 public constant REPUTATION_POINTS_LENDER_APPROVED_PARTIAL_AGREEMENT = 1;
+    int256 public constant REPUTATION_POINTS_LENDER_REJECTED_MODIFICATION = 0; // Neutral for now
+
+    // Voucher Reputation Points
     int256 public constant REPUTATION_POINTS_VOUCH_DEFAULTED_VOUCHER = -20;
-    int256 public constant REPUTATION_POINTS_LENT_SUCCESSFULLY = 5;
+
+    /**
+     * @notice Defines the outcome of a loan repayment for reputation calculation.
+     *         This enum is specific to the Reputation contract's internal logic.
+     */
+    enum PaymentOutcomeType {
+        None, // Default or not yet determined
+        OnTimeOriginal,          // Paid by original due date, no modifications involved or modifications were not ultimately used for repayment timing.
+        LateGraceOriginal,       // Paid after original due date but before default, no formal extension approved.
+        OnTimeExtended,          // Paid by an approved new due date (extension).
+        LateExtended,            // Paid after an approved new due date (extension) but before default.
+        PartialAgreementMetAndRepaid, // A partial payment agreement was approved, terms met, and loan eventually fully repaid.
+        Defaulted                // Loan defaulted.
+    }
 
     event ReputationUpdated(address indexed user, int256 newScore, string reason);
+    event LoanTermOutcomeRecorded(bytes32 indexed agreementId, address indexed user, int256 reputationChange, string reason, PaymentOutcomeType outcomeType);
     event VouchAdded(address indexed voucher, address indexed borrower, address token, uint256 amount);
     event VouchRemoved(address indexed voucher, address indexed borrower, uint256 returnedAmount);
     event VouchSlashed(address indexed voucher, address indexed defaultingBorrower, uint256 slashedAmount, address indexed slashedToLender);
@@ -86,37 +117,145 @@ contract Reputation is Ownable, ReentrancyGuard {
                 loansTaken: 0,
                 loansGiven: 0,
                 loansRepaidOnTime: 0,
+                loansRepaidLateGrace: 0,
                 loansDefaulted: 0,
                 totalValueBorrowed: 0,
                 totalValueLent: 0,
                 currentReputationScore: 0,
                 vouchingStakeAmount: 0,
                 timesVouchedForOthers: 0,
-                timesDefaultedAsVoucher: 0
+                timesDefaultedAsVoucher: 0,
+                modificationsApprovedByLender: 0,
+                modificationsRejectedByLender: 0
             });
         }
     }
 
-    function updateReputationOnLoanRepayment(
+    /**
+     * @notice Records the outcome of a loan payment/conclusion for reputation adjustments.
+     * @dev Called by P2PLending contract upon loan repayment or other conclusions like meeting modified terms.
+     * @param agreementId The ID of the loan agreement.
+     * @param borrower The address of the borrower.
+     * @param lender The address of the lender.
+     * @param principalAmount The principal amount of the loan.
+     * @param outcome The determined outcome type for reputation calculation.
+     * @param modificationTypeUsed The type of payment modification that was active/approved (if any).
+     * @param lenderApprovedRequest True if the lender had approved a modification request relevant to this outcome.
+     */
+    function recordLoanPaymentOutcome(
+        bytes32 agreementId,
         address borrower,
         address lender,
-        uint256 loanAmount
+        uint256 principalAmount,
+        PaymentOutcomeType outcome,
+        P2PLending.PaymentModificationType modificationTypeUsed, // Enum from P2PLending
+        bool lenderApprovedRequest
     ) external onlyP2PLendingContract {
         _initializeReputationProfileIfNotExists(borrower);
         _initializeReputationProfileIfNotExists(lender);
 
         ReputationProfile storage borrowerProfile = userReputations[borrower];
-        borrowerProfile.loansTaken++;
-        borrowerProfile.loansRepaidOnTime++;
-        borrowerProfile.totalValueBorrowed += loanAmount;
-        borrowerProfile.currentReputationScore += REPUTATION_POINTS_REPAID;
-        emit ReputationUpdated(borrower, borrowerProfile.currentReputationScore, "Loan repaid");
-
         ReputationProfile storage lenderProfile = userReputations[lender];
+        int256 borrowerRepChange = 0;
+        string memory borrowerReason = "Loan outcome processed";
+        int256 lenderRepChange = 0;
+        string memory lenderReason = "Loan outcome processed for lender";
+
+        borrowerProfile.loansTaken++;
+        borrowerProfile.totalValueBorrowed += principalAmount;
+
+        if (outcome == PaymentOutcomeType.OnTimeOriginal) {
+            borrowerRepChange = REPUTATION_POINTS_REPAID_ON_TIME_ORIGINAL;
+            borrowerProfile.loansRepaidOnTime++;
+            borrowerReason = "Loan repaid on time (original terms)";
+            lenderRepChange += REPUTATION_POINTS_LENT_SUCCESSFULLY_ON_TIME_ORIGINAL;
+            lenderReason = "Loan lent and repaid on time (original terms)";
+        } else if (outcome == PaymentOutcomeType.LateGraceOriginal) {
+            borrowerRepChange = REPUTATION_POINTS_REPAID_LATE_GRACE;
+            borrowerProfile.loansRepaidLateGrace++;
+            borrowerReason = "Loan repaid late (grace, original terms)";
+            lenderRepChange += REPUTATION_POINTS_LENT_SUCCESSFULLY_AFTER_MODIFICATION; // Still successful, but late
+            lenderReason = "Loan lent and repaid (late grace)";
+        } else if (outcome == PaymentOutcomeType.OnTimeExtended) {
+            borrowerRepChange = REPUTATION_POINTS_REPAID_ON_TIME_AFTER_EXTENSION;
+            borrowerProfile.loansRepaidOnTime++; // Counts as on-time for the modified terms
+            borrowerReason = "Loan repaid on time (after extension)";
+            lenderRepChange += REPUTATION_POINTS_LENT_SUCCESSFULLY_AFTER_MODIFICATION;
+            lenderReason = "Loan lent and repaid (on time after extension)";
+        } else if (outcome == PaymentOutcomeType.LateExtended) {
+            borrowerRepChange = REPUTATION_POINTS_REPAID_LATE_AFTER_EXTENSION;
+            borrowerProfile.loansRepaidLateGrace++; // Or a new category for late after extension?
+            borrowerReason = "Loan repaid late (after extension)";
+            lenderRepChange += REPUTATION_POINTS_LENT_SUCCESSFULLY_AFTER_MODIFICATION; // Still successful, but very late
+            lenderReason = "Loan lent and repaid (late after extension)";
+        } else if (outcome == PaymentOutcomeType.PartialAgreementMetAndRepaid) {
+            borrowerRepChange = REPUTATION_POINTS_REPAID_WITH_PARTIAL_AGREEMENT_MET;
+            borrowerProfile.loansRepaidOnTime++; // Assuming meeting partial agreement counts as on-time like behavior for this path
+            borrowerReason = "Loan repaid after meeting partial payment agreement";
+            lenderRepChange += REPUTATION_POINTS_LENT_SUCCESSFULLY_AFTER_MODIFICATION;
+            lenderReason = "Loan lent and repaid (after partial payment agreement)";
+        }
+        // Default outcome is handled by updateReputationOnLoanDefault and not this function
+
+        if (borrowerRepChange != 0) {
+            borrowerProfile.currentReputationScore += borrowerRepChange;
+            emit ReputationUpdated(borrower, borrowerProfile.currentReputationScore, borrowerReason);
+            emit LoanTermOutcomeRecorded(agreementId, borrower, borrowerRepChange, borrowerReason, outcome);
+        }
+
+        // Lender reputation adjustments based on modification handling
+        if (lenderApprovedRequest) {
+            lenderProfile.modificationsApprovedByLender++;
+            if (modificationTypeUsed == P2PLending.PaymentModificationType.DueDateExtension) {
+                lenderRepChange += REPUTATION_POINTS_LENDER_APPROVED_EXTENSION;
+            } else if (modificationTypeUsed == P2PLending.PaymentModificationType.PartialPaymentAgreement) {
+                lenderRepChange += REPUTATION_POINTS_LENDER_APPROVED_PARTIAL_AGREEMENT;
+            }
+        } else if (modificationTypeUsed != P2PLending.PaymentModificationType.None) { // A modification was involved but not approved by lender
+            lenderProfile.modificationsRejectedByLender++;
+            lenderRepChange += REPUTATION_POINTS_LENDER_REJECTED_MODIFICATION;
+        }
+        // If this function is called, it implies the loan was successfully concluded (not defaulted)
         lenderProfile.loansGiven++;
-        lenderProfile.totalValueLent += loanAmount;
-        lenderProfile.currentReputationScore += REPUTATION_POINTS_LENT_SUCCESSFULLY;
-        emit ReputationUpdated(lender, lenderProfile.currentReputationScore, "Loan lent and repaid");
+        lenderProfile.totalValueLent += principalAmount;
+        // The REPUTATION_POINTS_LENT_SUCCESSFULLY... is already added above based on outcome.
+
+        if (lenderRepChange != 0) {
+            lenderProfile.currentReputationScore += lenderRepChange;
+            
+            // lenderReason is already set based on the core outcome (e.g., OnTimeOriginal, LateGraceOriginal)
+            string memory finalLenderReason = lenderReason; 
+
+            // Check if any modification-specific points were added that would alter the base lenderRepChange
+            bool modificationSpecificPointsInvolved = false;
+            if (lenderApprovedRequest) {
+                if (modificationTypeUsed == P2PLending.PaymentModificationType.DueDateExtension && lenderRepChange != REPUTATION_POINTS_LENT_SUCCESSFULLY_AFTER_MODIFICATION + REPUTATION_POINTS_LENDER_APPROVED_EXTENSION && lenderRepChange != REPUTATION_POINTS_LENT_SUCCESSFULLY_ON_TIME_ORIGINAL + REPUTATION_POINTS_LENDER_APPROVED_EXTENSION) {
+                    // This case implies only base points if true, so only override if combined
+                } else if (modificationTypeUsed == P2PLending.PaymentModificationType.DueDateExtension && (REPUTATION_POINTS_LENDER_APPROVED_EXTENSION != 0) ) {
+                     modificationSpecificPointsInvolved = true;
+                }
+                if (modificationTypeUsed == P2PLending.PaymentModificationType.PartialPaymentAgreement && lenderRepChange != REPUTATION_POINTS_LENT_SUCCESSFULLY_AFTER_MODIFICATION + REPUTATION_POINTS_LENDER_APPROVED_PARTIAL_AGREEMENT && lenderRepChange != REPUTATION_POINTS_LENT_SUCCESSFULLY_ON_TIME_ORIGINAL + REPUTATION_POINTS_LENDER_APPROVED_PARTIAL_AGREEMENT) {
+                    // This case implies only base points if true, so only override if combined
+                } else if (modificationTypeUsed == P2PLending.PaymentModificationType.PartialPaymentAgreement && (REPUTATION_POINTS_LENDER_APPROVED_PARTIAL_AGREEMENT != 0) ) {
+                    modificationSpecificPointsInvolved = true;
+                }
+
+            } else if (modificationTypeUsed != P2PLending.PaymentModificationType.None) { 
+                 // A modification was involved but not approved by lender (e.g. rejected)
+                 // If points for rejection are non-zero and were added to lenderRepChange
+                 if (REPUTATION_POINTS_LENDER_REJECTED_MODIFICATION != 0 && (lenderRepChange == REPUTATION_POINTS_LENT_SUCCESSFULLY_ON_TIME_ORIGINAL + REPUTATION_POINTS_LENDER_REJECTED_MODIFICATION || lenderRepChange == REPUTATION_POINTS_LENT_SUCCESSFULLY_AFTER_MODIFICATION + REPUTATION_POINTS_LENDER_REJECTED_MODIFICATION ) ) {
+                    modificationSpecificPointsInvolved = true;
+                 }
+            }
+
+            if (modificationSpecificPointsInvolved) {
+                finalLenderReason = "Loan outcome and modification handling for lender";
+            }
+            // If !modificationSpecificPointsInvolved, finalLenderReason remains the specific one (e.g. "Loan lent and repaid on time (original terms)")
+
+            emit ReputationUpdated(lender, lenderProfile.currentReputationScore, finalLenderReason);
+            emit LoanTermOutcomeRecorded(agreementId, lender, lenderRepChange, finalLenderReason, outcome);
+        }
     }
 
     function updateReputationOnLoanDefault(
@@ -212,8 +351,8 @@ contract Reputation is Ownable, ReentrancyGuard {
         }
     }
 
-    function getReputationProfile(address user) external view returns (ReputationProfile memory) {
-        return userReputations[user];
+    function getReputationProfile(address _user) public view returns (ReputationProfile memory) {
+        return userReputations[_user];
     }
 
     function getVouchDetails(address voucher, address borrower) external view returns (Vouch memory) {

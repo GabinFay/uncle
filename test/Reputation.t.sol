@@ -1,282 +1,561 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "forge-std/Test.sol";
-import "../src/UserRegistry.sol";
-import "../src/Reputation.sol";
-import "../src/P2PLending.sol"; // For access to P2PLending contract if needed for setup
-import "./mocks/MockERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "./mocks/MockWorldIdRouter.sol"; // Import mock router
+import {Test, console} from "forge-std/Test.sol";
+import {UserRegistry} from "../src/UserRegistry.sol";
+import {Reputation} from "../src/Reputation.sol";
+import {P2PLending} from "../src/P2PLending.sol"; // Import P2PLending for its enums
+import {MockERC20} from "./mocks/MockERC20.sol";
+import {MockWorldIdRouter} from "./mocks/MockWorldIdRouter.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract ReputationTest is Test {
-    UserRegistry public userRegistry;
-    Reputation public reputation;
-    P2PLending public p2pLendingInstanceForMocking; // Renamed for clarity
-    MockERC20 public mockDai;
-    MockWorldIdRouter public mockWorldIdRouter; // Mock router instance
+    UserRegistry userRegistry;
+    Reputation reputation;
+    MockERC20 mockDai;
+    MockWorldIdRouter mockWorldIdRouter;
 
-    address owner;
-    address user1 = vm.addr(1); // Will act as borrower, lender, voucher
-    address user2 = vm.addr(2);
-    address user3 = vm.addr(3);
-    address actualP2PLendingAddress; // Will hold the address of p2pLendingInstanceForMocking
-    address reputationOAppMockAddress = vm.addr(8); // From P2PLending tests, keep consistent if used
+    address owner = address(this);
+    address user1 = vm.addr(1); // Generic user / borrower
+    address user2 = vm.addr(2); // Generic user / lender
+    address voucher1 = vm.addr(3);
+    address p2pLendingContract; // Will be set in setUp
 
-    uint256 user1Nullifier = 77777;
-    uint256 user2Nullifier = 88888;
-    uint256 user3Nullifier = 99999;
+    uint256 user1Nullifier = 111;
+    uint256 user2Nullifier = 222;
+    uint256 voucher1Nullifier = 333;
 
-    // Dummy proof data for tests
-    uint256 private constant DUMMY_ROOT = 987654323; // Different again for clarity
-    uint256[8] private DUMMY_PROOF; // Assign in setUp
-
-    // App and action IDs for testing
+    uint256 private constant DUMMY_ROOT = 12345;
+    uint256[8] private DUMMY_PROOF;
     string testAppIdString = "test-app-reputation";
     string testActionIdRegisterUserString = "test-register-reputation";
 
-    function setUp() public {
-        DUMMY_PROOF = [uint256(1), 3, 5, 7, 9, 2, 4, 6]; // Assign DUMMY_PROOF
-        owner = address(this);
+    event ReputationUpdated(address indexed user, int256 newScore, string reason);
+    event LoanTermOutcomeRecorded(bytes32 indexed agreementId, address indexed user, int256 reputationChange, string reason, Reputation.PaymentOutcomeType outcomeType);
+    event VouchAdded(address indexed voucher, address indexed borrower, address token, uint256 amount);
+    event VouchRemoved(address indexed voucher, address indexed borrower, uint256 returnedAmount);
+    event VouchSlashed(address indexed voucher, address indexed defaultingBorrower, uint256 slashedAmount, address indexed slashedToLender);
 
+    function setUp() public {
+        DUMMY_PROOF = [uint256(1), 2, 3, 4, 5, 6, 7, 8];
         mockWorldIdRouter = new MockWorldIdRouter();
         userRegistry = new UserRegistry(address(mockWorldIdRouter), testAppIdString, testActionIdRegisterUserString);
         reputation = new Reputation(address(userRegistry));
+        
+        p2pLendingContract = vm.addr(4); // Assign a mock address for the P2P lending contract
 
-        // Deploy a P2PLending instance. Its address will be used as the mock caller.
-        // P2PLending constructor: UserRegistry, ReputationContract, Treasury (0), OApp
-        p2pLendingInstanceForMocking = new P2PLending(
-            address(userRegistry),
-            address(reputation),         // P2PLending needs a Reputation address
-            payable(address(0)),         // Treasury not used
-            reputationOAppMockAddress    // OApp placeholder
-        );
-        actualP2PLendingAddress = address(p2pLendingInstanceForMocking);
-
-        // Set the (mock) P2PLending address in the Reputation contract so it accepts calls
         vm.prank(owner);
-        reputation.setP2PLendingContractAddress(actualP2PLendingAddress);
+        reputation.setP2PLendingContractAddress(p2pLendingContract);
 
-        // Register users (assuming proof verification will pass)
         mockWorldIdRouter.setShouldProofSucceed(true);
         vm.prank(owner); userRegistry.registerUser(user1, DUMMY_ROOT, user1Nullifier, DUMMY_PROOF);
         vm.prank(owner); userRegistry.registerUser(user2, DUMMY_ROOT, user2Nullifier, DUMMY_PROOF);
-        vm.prank(owner); userRegistry.registerUser(user3, DUMMY_ROOT, user3Nullifier, DUMMY_PROOF);
+        vm.prank(owner); userRegistry.registerUser(voucher1, DUMMY_ROOT, voucher1Nullifier, DUMMY_PROOF);
 
         mockDai = new MockERC20("Mock DAI", "mDAI", 18);
-        mockDai.mint(user1, 1000 * 1e18);
-        mockDai.mint(user2, 1000 * 1e18);
-        mockDai.mint(user3, 1000 * 1e18);
-    }
-
-    // --- Test: Set P2P Lending Contract Address ---
-    function test_SetP2PLendingContractAddress_Success() public {
-        address newP2PAddress = vm.addr(11);
-        vm.prank(owner);
-        reputation.setP2PLendingContractAddress(newP2PAddress);
-        assertEq(reputation.p2pLendingContractAddress(), newP2PAddress, "P2P lending address mismatch");
+        mockDai.mint(voucher1, 1000e18);
     }
 
     function test_RevertIf_SetP2PLendingContractAddress_NotOwner() public {
-        address newP2PAddress = vm.addr(11);
         vm.startPrank(user1);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user1));
-        reputation.setP2PLendingContractAddress(newP2PAddress);
+        reputation.setP2PLendingContractAddress(p2pLendingContract);
         vm.stopPrank();
     }
 
     function test_RevertIf_SetP2PLendingContractAddress_ZeroAddress() public {
-        vm.prank(owner);
+        vm.startPrank(owner);
         vm.expectRevert(bytes("Invalid P2PLending contract address"));
         reputation.setP2PLendingContractAddress(address(0));
-    }
-
-    // --- Test: Reputation Updates (called by P2P Lending Contract) ---
-    function test_UpdateReputationOnLoanRepayment_Success() public {
-        uint256 loanAmount = 100 * 1e18;
-
-        vm.startPrank(actualP2PLendingAddress); // Simulate call from P2PLending contract
-        reputation.updateReputationOnLoanRepayment(user1 /*borrower*/, user2 /*lender*/, loanAmount);
-        vm.stopPrank();
-
-        Reputation.ReputationProfile memory borrowerProfile = reputation.getReputationProfile(user1);
-        Reputation.ReputationProfile memory lenderProfile = reputation.getReputationProfile(user2);
-
-        assertEq(borrowerProfile.loansTaken, 1, "Borrower loans taken mismatch");
-        assertEq(borrowerProfile.loansRepaidOnTime, 1, "Borrower loans repaid mismatch");
-        assertEq(borrowerProfile.totalValueBorrowed, loanAmount, "Borrower total value borrowed mismatch");
-        assertEq(borrowerProfile.currentReputationScore, reputation.REPUTATION_POINTS_REPAID(), "Borrower reputation score mismatch");
-
-        assertEq(lenderProfile.loansGiven, 1, "Lender loans given mismatch");
-        assertEq(lenderProfile.totalValueLent, loanAmount, "Lender total value lent mismatch");
-        assertEq(lenderProfile.currentReputationScore, reputation.REPUTATION_POINTS_LENT_SUCCESSFULLY(), "Lender reputation score mismatch");
-    }
-
-    function test_RevertIf_UpdateReputationOnLoanRepayment_NotP2PContract() public {
-        vm.startPrank(user1); // Any address other than P2PLending contract
-        vm.expectRevert(bytes("Reputation: Caller is not P2PLending contract"));
-        reputation.updateReputationOnLoanRepayment(user1, user2, 100e18);
         vm.stopPrank();
     }
 
+    function test_SetP2PLendingContractAddress_Success() public {
+        address newP2PAddress = vm.addr(5);
+        vm.prank(owner);
+        reputation.setP2PLendingContractAddress(newP2PAddress);
+        assertEq(reputation.p2pLendingContractAddress(), newP2PAddress);
+    }
+
+    // Test for recordLoanPaymentOutcome - OnTimeOriginal
+    function test_RecordLoanPaymentOutcome_OnTimeOriginal() public {
+        bytes32 agreementId = keccak256(abi.encodePacked("agreement1"));
+        uint256 principalAmount = 100e18;
+        
+        Reputation.ReputationProfile memory initialBorrowerProfile = reputation.getReputationProfile(user1);
+        int256 initialBorrowerRep = initialBorrowerProfile.currentReputationScore;
+        uint256 initialBorrowerLoansTaken = initialBorrowerProfile.loansTaken;
+        uint256 initialBorrowerLoansRepaidOnTime = initialBorrowerProfile.loansRepaidOnTime;
+        uint256 initialBorrowerTotalValueBorrowed = initialBorrowerProfile.totalValueBorrowed;
+
+        Reputation.ReputationProfile memory initialLenderProfile = reputation.getReputationProfile(user2);
+        int256 initialLenderRep = initialLenderProfile.currentReputationScore;
+        uint256 initialLenderLoansGiven = initialLenderProfile.loansGiven;
+        uint256 initialLenderTotalValueLent = initialLenderProfile.totalValueLent;
+
+        int256 borrowerRepChange = reputation.REPUTATION_POINTS_REPAID_ON_TIME_ORIGINAL();
+        string memory borrowerReason = "Loan repaid on time (original terms)";
+        int256 expectedBorrowerNewScore = initialBorrowerRep + borrowerRepChange;
+
+        int256 lenderRepChange = reputation.REPUTATION_POINTS_LENT_SUCCESSFULLY_ON_TIME_ORIGINAL();
+        string memory expectedLenderReasonContract = "Loan lent and repaid on time (original terms)";
+        int256 expectedLenderNewScore = initialLenderRep + lenderRepChange;
+
+        vm.startPrank(p2pLendingContract);
+        // Borrower events - Order: RU then LTOR
+        vm.expectEmit(true, false, false, true, address(reputation)); // RU for borrower (user1 indexed, newScore, reason)
+        emit ReputationUpdated(user1, expectedBorrowerNewScore, borrowerReason);
+        vm.expectEmit(true, true, false, false, address(reputation)); // LTOR for borrower (agreementId, user1 indexed, change, reason, outcome)
+        emit LoanTermOutcomeRecorded(agreementId, user1, borrowerRepChange, borrowerReason, Reputation.PaymentOutcomeType.OnTimeOriginal);
+        
+        // Lender events - Order: RU then LTOR
+        vm.expectEmit(true, false, false, true, address(reputation)); // RU for lender (user2 indexed, newScore, reason)
+        emit ReputationUpdated(user2, expectedLenderNewScore, expectedLenderReasonContract);
+        vm.expectEmit(true, true, false, false, address(reputation)); // LTOR for lender (agreementId, user2 indexed, change, reason, outcome)
+        emit LoanTermOutcomeRecorded(agreementId, user2, lenderRepChange, expectedLenderReasonContract, Reputation.PaymentOutcomeType.OnTimeOriginal);
+
+        reputation.recordLoanPaymentOutcome(
+            agreementId,
+            user1,
+            user2,
+            principalAmount,
+            Reputation.PaymentOutcomeType.OnTimeOriginal,
+            P2PLending.PaymentModificationType.None,
+            false
+        );
+        vm.stopPrank();
+
+        Reputation.ReputationProfile memory finalBorrowerProfile = reputation.getReputationProfile(user1);
+        assertEq(finalBorrowerProfile.currentReputationScore, expectedBorrowerNewScore, "Borrower rep score mismatch");
+        assertEq(finalBorrowerProfile.loansTaken, initialBorrowerLoansTaken + 1, "Borrower loans taken mismatch");
+        assertEq(finalBorrowerProfile.loansRepaidOnTime, initialBorrowerLoansRepaidOnTime + 1, "Borrower loans repaid on time mismatch");
+        assertEq(finalBorrowerProfile.totalValueBorrowed, initialBorrowerTotalValueBorrowed + principalAmount, "Borrower total value borrowed mismatch");
+
+        Reputation.ReputationProfile memory finalLenderProfile = reputation.getReputationProfile(user2);
+        assertEq(finalLenderProfile.currentReputationScore, expectedLenderNewScore, "Lender rep score mismatch");
+        assertEq(finalLenderProfile.loansGiven, initialLenderLoansGiven + 1, "Lender loans given mismatch");
+        assertEq(finalLenderProfile.totalValueLent, initialLenderTotalValueLent + principalAmount, "Lender total value lent mismatch");
+    }
+
+    // Test for recordLoanPaymentOutcome - LateGraceOriginal
+    function test_RecordLoanPaymentOutcome_LateGraceOriginal() public {
+        bytes32 agreementId = keccak256(abi.encodePacked("agreement_late_grace"));
+        uint256 principalAmount = 50e18;
+        Reputation.ReputationProfile memory initialBorrowerProfile = reputation.getReputationProfile(user1);
+        int256 initialBorrowerRep = initialBorrowerProfile.currentReputationScore;
+        uint256 initialBorrowerLoansRepaidLateGrace = initialBorrowerProfile.loansRepaidLateGrace;
+        
+        Reputation.ReputationProfile memory initialLenderProfile = reputation.getReputationProfile(user2);
+        int256 initialLenderRep = initialLenderProfile.currentReputationScore;
+
+        int256 borrowerRepChange = reputation.REPUTATION_POINTS_REPAID_LATE_GRACE();
+        string memory borrowerReason = "Loan repaid late (grace, original terms)";
+        int256 expectedBorrowerNewScore = initialBorrowerRep + borrowerRepChange;
+
+        int256 lenderRepChange = reputation.REPUTATION_POINTS_LENT_SUCCESSFULLY_AFTER_MODIFICATION(); 
+        string memory expectedLenderReasonContract = "Loan lent and repaid (late grace)";
+        int256 expectedLenderNewScore = initialLenderRep + lenderRepChange;
+
+        vm.startPrank(p2pLendingContract);
+        // Borrower events - Order: RU then LTOR
+        vm.expectEmit(true, false, false, true, address(reputation)); // RU for borrower
+        emit ReputationUpdated(user1, expectedBorrowerNewScore, borrowerReason);
+        vm.expectEmit(true, true, false, false, address(reputation)); // LTOR for borrower
+        emit LoanTermOutcomeRecorded(agreementId, user1, borrowerRepChange, borrowerReason, Reputation.PaymentOutcomeType.LateGraceOriginal);
+        
+        // Lender events - Order: RU then LTOR
+        vm.expectEmit(true, false, false, true, address(reputation)); // RU for lender
+        emit ReputationUpdated(user2, expectedLenderNewScore, expectedLenderReasonContract);
+        vm.expectEmit(true, true, false, false, address(reputation)); // LTOR for lender
+        emit LoanTermOutcomeRecorded(agreementId, user2, lenderRepChange, expectedLenderReasonContract, Reputation.PaymentOutcomeType.LateGraceOriginal);
+
+        reputation.recordLoanPaymentOutcome(
+            agreementId, user1, user2, principalAmount,
+            Reputation.PaymentOutcomeType.LateGraceOriginal,
+            P2PLending.PaymentModificationType.None,
+            false 
+        );
+        vm.stopPrank();
+
+        Reputation.ReputationProfile memory finalBorrowerProfile = reputation.getReputationProfile(user1);
+        assertEq(finalBorrowerProfile.currentReputationScore, expectedBorrowerNewScore);
+        assertEq(finalBorrowerProfile.loansRepaidLateGrace, initialBorrowerLoansRepaidLateGrace + 1);
+
+        Reputation.ReputationProfile memory finalLenderProfile = reputation.getReputationProfile(user2);
+        assertEq(finalLenderProfile.currentReputationScore, expectedLenderNewScore);
+    }
+
+    // Test for recordLoanPaymentOutcome - OnTimeExtended
+    function test_RecordLoanPaymentOutcome_OnTimeExtended_LenderApproved() public {
+        bytes32 agreementId = keccak256(abi.encodePacked("agreement_ext_ontime"));
+        uint256 principalAmount = 70e18;
+        Reputation.ReputationProfile memory initialBorrowerProfile = reputation.getReputationProfile(user1);
+        int256 initialBorrowerRep = initialBorrowerProfile.currentReputationScore;
+        uint256 initialBorrowerLoansRepaidOnTime = initialBorrowerProfile.loansRepaidOnTime;
+        
+        Reputation.ReputationProfile memory initialLenderProfile = reputation.getReputationProfile(user2);
+        int256 initialLenderRep = initialLenderProfile.currentReputationScore;
+        uint256 initialLenderModificationsApproved = initialLenderProfile.modificationsApprovedByLender;
+        
+        int256 borrowerRepChange = reputation.REPUTATION_POINTS_REPAID_ON_TIME_AFTER_EXTENSION();
+        string memory borrowerReason = "Loan repaid on time (after extension)";
+        int256 expectedBorrowerNewScore = initialBorrowerRep + borrowerRepChange;
+
+        int256 lenderRepDeltaForLoan = reputation.REPUTATION_POINTS_LENT_SUCCESSFULLY_AFTER_MODIFICATION();
+        int256 lenderRepDeltaForApproval = reputation.REPUTATION_POINTS_LENDER_APPROVED_EXTENSION();
+        int256 totalLenderRepChange = lenderRepDeltaForLoan + lenderRepDeltaForApproval;
+        string memory expectedLenderReasonContract = "Loan outcome and modification handling for lender";
+        int256 expectedLenderNewScore = initialLenderRep + totalLenderRepChange;
+
+        vm.startPrank(p2pLendingContract);
+        // Borrower events - Order: RU then LTOR
+        vm.expectEmit(true, false, false, true, address(reputation)); // RU for borrower
+        emit ReputationUpdated(user1, expectedBorrowerNewScore, borrowerReason);
+        vm.expectEmit(true, true, false, false, address(reputation)); // LTOR for borrower
+        emit LoanTermOutcomeRecorded(agreementId, user1, borrowerRepChange, borrowerReason, Reputation.PaymentOutcomeType.OnTimeExtended);
+        
+        // Lender events - Order: RU then LTOR
+        vm.expectEmit(true, false, false, true, address(reputation)); // RU for lender
+        emit ReputationUpdated(user2, expectedLenderNewScore, expectedLenderReasonContract);
+        vm.expectEmit(true, true, false, false, address(reputation)); // LTOR for lender
+        emit LoanTermOutcomeRecorded(agreementId, user2, totalLenderRepChange, expectedLenderReasonContract, Reputation.PaymentOutcomeType.OnTimeExtended);
+
+        reputation.recordLoanPaymentOutcome(
+            agreementId, user1, user2, principalAmount,
+            Reputation.PaymentOutcomeType.OnTimeExtended,
+            P2PLending.PaymentModificationType.DueDateExtension,
+            true 
+        );
+        vm.stopPrank();
+
+        Reputation.ReputationProfile memory finalBorrowerProfile = reputation.getReputationProfile(user1);
+        assertEq(finalBorrowerProfile.currentReputationScore, expectedBorrowerNewScore);
+        assertEq(finalBorrowerProfile.loansRepaidOnTime, initialBorrowerLoansRepaidOnTime + 1);
+
+        Reputation.ReputationProfile memory finalLenderProfile = reputation.getReputationProfile(user2);
+        assertEq(finalLenderProfile.currentReputationScore, expectedLenderNewScore, "Lender rep score after approved extension mismatch");
+        assertEq(finalLenderProfile.modificationsApprovedByLender, initialLenderModificationsApproved + 1);
+    }
+
+    // Test for recordLoanPaymentOutcome - LateExtended
+    function test_RecordLoanPaymentOutcome_LateExtended_LenderApproved() public {
+        bytes32 agreementId = keccak256(abi.encodePacked("agreement_ext_late"));
+        uint256 principalAmount = 80e18;
+        Reputation.ReputationProfile memory initialBorrowerProfile = reputation.getReputationProfile(user1);
+        int256 initialBorrowerRep = initialBorrowerProfile.currentReputationScore;
+        uint256 initialBorrowerLoansRepaidLateGrace = initialBorrowerProfile.loansRepaidLateGrace;
+
+        Reputation.ReputationProfile memory initialLenderProfile = reputation.getReputationProfile(user2);
+        int256 initialLenderRep = initialLenderProfile.currentReputationScore;
+        uint256 initialLenderModificationsApproved = initialLenderProfile.modificationsApprovedByLender;
+
+        int256 borrowerRepChange = reputation.REPUTATION_POINTS_REPAID_LATE_AFTER_EXTENSION();
+        string memory borrowerReason = "Loan repaid late (after extension)";
+        int256 expectedBorrowerNewScore = initialBorrowerRep + borrowerRepChange;
+        
+        int256 lenderRepDeltaForLoan = reputation.REPUTATION_POINTS_LENT_SUCCESSFULLY_AFTER_MODIFICATION();
+        int256 lenderRepDeltaForApproval = reputation.REPUTATION_POINTS_LENDER_APPROVED_EXTENSION(); 
+        int256 totalLenderRepChange = lenderRepDeltaForLoan + lenderRepDeltaForApproval;
+        string memory expectedLenderReasonContract = "Loan outcome and modification handling for lender";
+        int256 expectedLenderNewScore = initialLenderRep + totalLenderRepChange;
+
+        vm.startPrank(p2pLendingContract);
+        // Borrower events - Order: RU then LTOR
+        vm.expectEmit(true, false, false, true, address(reputation)); // RU for borrower
+        emit ReputationUpdated(user1, expectedBorrowerNewScore, borrowerReason);
+        vm.expectEmit(true, true, false, false, address(reputation)); // LTOR for borrower
+        emit LoanTermOutcomeRecorded(agreementId, user1, borrowerRepChange, borrowerReason, Reputation.PaymentOutcomeType.LateExtended);
+
+        // Lender events - Order: RU then LTOR
+        vm.expectEmit(true, false, false, true, address(reputation)); // RU for lender
+        emit ReputationUpdated(user2, expectedLenderNewScore, expectedLenderReasonContract);
+        vm.expectEmit(true, true, false, false, address(reputation)); // LTOR for lender
+        emit LoanTermOutcomeRecorded(agreementId, user2, totalLenderRepChange, expectedLenderReasonContract, Reputation.PaymentOutcomeType.LateExtended);
+
+        reputation.recordLoanPaymentOutcome(
+            agreementId, user1, user2, principalAmount,
+            Reputation.PaymentOutcomeType.LateExtended,
+            P2PLending.PaymentModificationType.DueDateExtension,
+            true 
+        );
+        vm.stopPrank();
+
+        Reputation.ReputationProfile memory finalBorrowerProfile = reputation.getReputationProfile(user1);
+        assertEq(finalBorrowerProfile.currentReputationScore, expectedBorrowerNewScore);
+        assertEq(finalBorrowerProfile.loansRepaidLateGrace, initialBorrowerLoansRepaidLateGrace + 1); 
+
+        Reputation.ReputationProfile memory finalLenderProfile = reputation.getReputationProfile(user2);
+        assertEq(finalLenderProfile.currentReputationScore, expectedLenderNewScore);
+        assertEq(finalLenderProfile.modificationsApprovedByLender, initialLenderModificationsApproved + 1);
+    }
+
+    // Test for recordLoanPaymentOutcome - PartialAgreementMetAndRepaid
+    function test_RecordLoanPaymentOutcome_PartialAgreementMet_LenderApproved() public {
+        bytes32 agreementId = keccak256(abi.encodePacked("agreement_partial_met"));
+        uint256 principalAmount = 90e18; 
+        Reputation.ReputationProfile memory initialBorrowerProfile = reputation.getReputationProfile(user1);
+        int256 initialBorrowerRep = initialBorrowerProfile.currentReputationScore;
+        uint256 initialBorrowerLoansRepaidOnTime = initialBorrowerProfile.loansRepaidOnTime;
+
+        Reputation.ReputationProfile memory initialLenderProfile = reputation.getReputationProfile(user2);
+        int256 initialLenderRep = initialLenderProfile.currentReputationScore;
+        uint256 initialLenderModificationsApproved = initialLenderProfile.modificationsApprovedByLender;
+
+        int256 borrowerRepChange = reputation.REPUTATION_POINTS_REPAID_WITH_PARTIAL_AGREEMENT_MET();
+        string memory borrowerReason = "Loan repaid after meeting partial payment agreement";
+        int256 expectedBorrowerNewScore = initialBorrowerRep + borrowerRepChange;
+
+        int256 lenderRepDeltaForLoan = reputation.REPUTATION_POINTS_LENT_SUCCESSFULLY_AFTER_MODIFICATION();
+        int256 lenderRepDeltaForApproval = reputation.REPUTATION_POINTS_LENDER_APPROVED_PARTIAL_AGREEMENT();
+        int256 totalLenderRepChange = lenderRepDeltaForLoan + lenderRepDeltaForApproval;
+        string memory expectedLenderReasonContract = "Loan outcome and modification handling for lender";
+        int256 expectedLenderNewScore = initialLenderRep + totalLenderRepChange;
+
+        vm.startPrank(p2pLendingContract);
+        // Borrower events - Order: RU then LTOR
+        vm.expectEmit(true, false, false, true, address(reputation)); // RU for borrower
+        emit ReputationUpdated(user1, expectedBorrowerNewScore, borrowerReason);
+        vm.expectEmit(true, true, false, false, address(reputation)); // LTOR for borrower
+        emit LoanTermOutcomeRecorded(agreementId, user1, borrowerRepChange, borrowerReason, Reputation.PaymentOutcomeType.PartialAgreementMetAndRepaid);
+
+        // Lender events - Order: RU then LTOR
+        vm.expectEmit(true, false, false, true, address(reputation)); // RU for lender
+        emit ReputationUpdated(user2, expectedLenderNewScore, expectedLenderReasonContract);
+        vm.expectEmit(true, true, false, false, address(reputation)); // LTOR for lender
+        emit LoanTermOutcomeRecorded(agreementId, user2, totalLenderRepChange, expectedLenderReasonContract, Reputation.PaymentOutcomeType.PartialAgreementMetAndRepaid);
+
+        reputation.recordLoanPaymentOutcome(
+            agreementId, user1, user2, principalAmount,
+            Reputation.PaymentOutcomeType.PartialAgreementMetAndRepaid,
+            P2PLending.PaymentModificationType.PartialPaymentAgreement,
+            true 
+        );
+        vm.stopPrank();
+
+        Reputation.ReputationProfile memory finalBorrowerProfile = reputation.getReputationProfile(user1);
+        assertEq(finalBorrowerProfile.currentReputationScore, expectedBorrowerNewScore);
+        assertEq(finalBorrowerProfile.loansRepaidOnTime, initialBorrowerLoansRepaidOnTime + 1);
+
+        Reputation.ReputationProfile memory finalLenderProfile = reputation.getReputationProfile(user2);
+        assertEq(finalLenderProfile.currentReputationScore, expectedLenderNewScore);
+        assertEq(finalLenderProfile.modificationsApprovedByLender, initialLenderModificationsApproved + 1);
+    }
+
+
+    function test_RecordLoanPaymentOutcome_LenderRejectedModification_BorrowerStillRepaidOnTimeOriginal() public {
+        bytes32 agreementId = keccak256(abi.encodePacked("agreement_reject_ontime_orig"));
+        uint256 principalAmount = 110e18;
+        Reputation.ReputationProfile memory initialBorrowerProfile = reputation.getReputationProfile(user1);
+        int256 initialBorrowerRep = initialBorrowerProfile.currentReputationScore;
+        uint256 initialBorrowerLoansRepaidOnTime = initialBorrowerProfile.loansRepaidOnTime;
+        
+        Reputation.ReputationProfile memory initialLenderProfile = reputation.getReputationProfile(user2);
+        int256 initialLenderRep = initialLenderProfile.currentReputationScore;
+        uint256 initialLenderModificationsRejected = initialLenderProfile.modificationsRejectedByLender;
+
+        int256 borrowerRepChange = reputation.REPUTATION_POINTS_REPAID_ON_TIME_ORIGINAL();
+        string memory borrowerReason = "Loan repaid on time (original terms)";
+        int256 expectedBorrowerNewScore = initialBorrowerRep + borrowerRepChange;
+
+        int256 lenderRepDeltaForLoan = reputation.REPUTATION_POINTS_LENT_SUCCESSFULLY_ON_TIME_ORIGINAL();
+        int256 lenderRepDeltaForRejection = reputation.REPUTATION_POINTS_LENDER_REJECTED_MODIFICATION(); 
+        int256 totalLenderRepChange = lenderRepDeltaForLoan + lenderRepDeltaForRejection;
+        string memory expectedLenderReasonContract = "Loan lent and repaid on time (original terms)";
+        int256 expectedLenderNewScore = initialLenderRep + totalLenderRepChange;
+
+        vm.startPrank(p2pLendingContract);
+        // Borrower events - Order: RU then LTOR
+        vm.expectEmit(true, false, false, true, address(reputation)); // RU for borrower
+        emit ReputationUpdated(user1, expectedBorrowerNewScore, borrowerReason);
+        vm.expectEmit(true, true, false, false, address(reputation)); // LTOR for borrower
+        emit LoanTermOutcomeRecorded(agreementId, user1, borrowerRepChange, borrowerReason, Reputation.PaymentOutcomeType.OnTimeOriginal);
+
+        // Lender events - Order: RU then LTOR
+        vm.expectEmit(true, false, false, true, address(reputation)); // RU for lender
+        emit ReputationUpdated(user2, expectedLenderNewScore, expectedLenderReasonContract);
+        vm.expectEmit(true, true, false, false, address(reputation)); // LTOR for lender
+        emit LoanTermOutcomeRecorded(agreementId, user2, totalLenderRepChange, expectedLenderReasonContract, Reputation.PaymentOutcomeType.OnTimeOriginal);
+
+        reputation.recordLoanPaymentOutcome(
+            agreementId,
+            user1, 
+            user2, 
+            principalAmount,
+            Reputation.PaymentOutcomeType.OnTimeOriginal, 
+            P2PLending.PaymentModificationType.DueDateExtension,
+            false
+        );
+        vm.stopPrank();
+
+        Reputation.ReputationProfile memory finalBorrowerProfile = reputation.getReputationProfile(user1);
+        assertEq(finalBorrowerProfile.currentReputationScore, expectedBorrowerNewScore);
+        assertEq(finalBorrowerProfile.loansRepaidOnTime, initialBorrowerLoansRepaidOnTime + 1);
+
+        Reputation.ReputationProfile memory finalLenderProfile = reputation.getReputationProfile(user2);
+        assertEq(finalLenderProfile.currentReputationScore, expectedLenderNewScore);
+        assertEq(finalLenderProfile.modificationsRejectedByLender, initialLenderModificationsRejected + 1);
+    }
+
+
+    // Test updateReputationOnLoanDefault
     function test_UpdateReputationOnLoanDefault_Success() public {
-        uint256 loanAmount = 200 * 1e18;
-        bytes32[] memory emptyVouches; // Placeholder, actual vouch slashing needs more design
+        bytes32 agreementId = keccak256(abi.encodePacked("agreement_default"));
+        uint256 principalAmount = 200e18;
+        Reputation.ReputationProfile memory initialBorrowerProfile = reputation.getReputationProfile(user1);
+        int256 initialBorrowerRep = initialBorrowerProfile.currentReputationScore;
+        uint256 initialBorrowerLoansDefaulted = initialBorrowerProfile.loansDefaulted;
+        uint256 initialBorrowerLoansTaken = initialBorrowerProfile.loansTaken;
 
-        vm.startPrank(actualP2PLendingAddress);
-        reputation.updateReputationOnLoanDefault(user1 /*borrower*/, user2 /*lender*/, loanAmount, emptyVouches);
+        int256 borrowerRepChange = reputation.REPUTATION_POINTS_DEFAULTED();
+        string memory borrowerReason = "Loan defaulted";
+        int256 expectedBorrowerNewScore = initialBorrowerRep + borrowerRepChange;
+        
+        vm.startPrank(p2pLendingContract);
+        vm.expectEmit(true, false, false, true, address(reputation)); // RU for borrower (user1 indexed)
+        emit ReputationUpdated(user1, expectedBorrowerNewScore, borrowerReason);
+
+        reputation.updateReputationOnLoanDefault(user1, user2, principalAmount, new bytes32[](0));
         vm.stopPrank();
 
-        Reputation.ReputationProfile memory borrowerProfile = reputation.getReputationProfile(user1);
-        assertEq(borrowerProfile.loansTaken, 1, "Default: Borrower loans taken mismatch");
-        assertEq(borrowerProfile.loansDefaulted, 1, "Default: Borrower loans defaulted mismatch");
-        assertEq(borrowerProfile.currentReputationScore, reputation.REPUTATION_POINTS_DEFAULTED(), "Default: Borrower reputation score mismatch");
-        // Lender profile should ideally be unchanged by borrower default in this basic scenario
-        Reputation.ReputationProfile memory lenderProfile = reputation.getReputationProfile(user2);
-        assertEq(lenderProfile.currentReputationScore, 0, "Default: Lender reputation should be unaffected");
+        Reputation.ReputationProfile memory finalBorrowerProfile = reputation.getReputationProfile(user1);
+        assertEq(finalBorrowerProfile.currentReputationScore, expectedBorrowerNewScore);
+        assertEq(finalBorrowerProfile.loansDefaulted, initialBorrowerLoansDefaulted + 1);
+        assertEq(finalBorrowerProfile.loansTaken, initialBorrowerLoansTaken + 1);
     }
 
-    // --- Test: Vouching --- 
+    // Test for adding a vouch
     function test_AddVouch_Success() public {
-        uint256 stakeAmount = 50 * 1e18;
-        vm.startPrank(user1); // user1 vouches for user2
-        mockDai.approve(address(reputation), stakeAmount);
-        reputation.addVouch(user2 /*borrowerToVouchFor*/, stakeAmount, address(mockDai));
-        vm.stopPrank();
+        uint256 vouchAmount = 100e18;
+        vm.prank(voucher1);
+        mockDai.approve(address(reputation), vouchAmount);
 
-        Reputation.Vouch memory vouch = reputation.getVouchDetails(user1, user2);
-        assertEq(vouch.voucher, user1, "Vouch voucher mismatch");
-        assertEq(vouch.borrower, user2, "Vouch borrower mismatch");
-        assertEq(vouch.stakedAmount, stakeAmount, "Vouch stake amount mismatch");
-        assertTrue(vouch.isActive, "Vouch should be active");
+        vm.expectEmit(true, true, false, true, address(reputation)); 
+        emit VouchAdded(voucher1, user1, address(mockDai), vouchAmount);
+        
+        vm.prank(voucher1);
+        reputation.addVouch(user1, vouchAmount, address(mockDai));
 
-        assertEq(mockDai.balanceOf(address(reputation)), stakeAmount, "Reputation contract DAI balance incorrect");
+        Reputation.Vouch memory vouch = reputation.getVouchDetails(voucher1, user1);
+        assertEq(vouch.voucher, voucher1);
+        assertEq(vouch.borrower, user1);
+        assertEq(vouch.tokenAddress, address(mockDai));
+        assertEq(vouch.stakedAmount, vouchAmount);
+        assertTrue(vouch.isActive);
 
-        Reputation.ReputationProfile memory voucherProfile = reputation.getReputationProfile(user1);
-        assertEq(voucherProfile.vouchingStakeAmount, stakeAmount, "Voucher's total stake mismatch");
-        assertEq(voucherProfile.timesVouchedForOthers, 1, "Voucher's times vouched mismatch");
-    }
+        assertEq(mockDai.balanceOf(address(reputation)), vouchAmount);
+        assertEq(mockDai.balanceOf(voucher1), 1000e18 - vouchAmount); 
 
-    function test_RevertIf_AddVouch_SelfVouch() public {
-        vm.startPrank(user1);
-        mockDai.approve(address(reputation), 50 * 1e18);
-        vm.expectRevert(bytes("Cannot vouch for yourself"));
-        reputation.addVouch(user1, 50 * 1e18, address(mockDai));
-        vm.stopPrank();
-    }
-
-    function test_RevertIf_AddVouch_BorrowerNotVerified() public {
-        address unverifiedUser = vm.addr(99);
-        // DO NOT register unverifiedUser in userRegistry
-        vm.startPrank(user1);
-        mockDai.approve(address(reputation), 50 * 1e18);
-        vm.expectRevert(bytes("Borrower not World ID verified"));
-        reputation.addVouch(unverifiedUser, 50 * 1e18, address(mockDai));
-        vm.stopPrank();
+        Reputation.ReputationProfile memory voucherProfile = reputation.getReputationProfile(voucher1);
+        assertEq(voucherProfile.vouchingStakeAmount, vouchAmount);
+        assertEq(voucherProfile.timesVouchedForOthers, 1);
     }
 
     function test_RemoveVouch_Success() public {
-        uint256 stakeAmount = 50 * 1e18;
-        vm.startPrank(user1); // user1 vouches for user2
-        mockDai.approve(address(reputation), stakeAmount);
-        reputation.addVouch(user2, stakeAmount, address(mockDai));
-        vm.stopPrank();
+        uint256 vouchAmount = 100e18;
+        vm.prank(voucher1);
+        mockDai.approve(address(reputation), vouchAmount);
+        vm.prank(voucher1);
+        reputation.addVouch(user1, vouchAmount, address(mockDai));
 
-        uint256 user1DaiBalanceBeforeRemove = mockDai.balanceOf(user1);
+        uint256 initialReputationBalance = mockDai.balanceOf(address(reputation));
+        uint256 initialVoucherBalance = mockDai.balanceOf(voucher1);
 
-        vm.startPrank(user1);
-        reputation.removeVouch(user2);
-        vm.stopPrank();
+        vm.expectEmit(true, true, false, true, address(reputation)); 
+        emit VouchRemoved(voucher1, user1, vouchAmount);
 
-        Reputation.Vouch memory vouch = reputation.getVouchDetails(user1, user2);
-        assertFalse(vouch.isActive, "Vouch should be inactive after removal");
-        assertEq(mockDai.balanceOf(user1), user1DaiBalanceBeforeRemove + stakeAmount, "Voucher DAI balance incorrect after stake return");
-        Reputation.ReputationProfile memory voucherProfile = reputation.getReputationProfile(user1);
-        assertEq(voucherProfile.vouchingStakeAmount, 0, "Voucher's total stake should be zero after removal");
+        vm.prank(voucher1);
+        reputation.removeVouch(user1);
+
+        Reputation.Vouch memory vouch = reputation.getVouchDetails(voucher1, user1);
+        assertFalse(vouch.isActive, "Vouch should be inactive"); 
+
+        assertEq(mockDai.balanceOf(address(reputation)), initialReputationBalance - vouchAmount, "Reputation contract balance incorrect");
+        assertEq(mockDai.balanceOf(voucher1), initialVoucherBalance + vouchAmount, "Voucher balance incorrect");
+        
+        Reputation.ReputationProfile memory finalVoucherProfile = reputation.getReputationProfile(voucher1);
+        assertEq(finalVoucherProfile.vouchingStakeAmount, 0, "Voucher stake amount not zeroed");
     }
 
-    function test_SlashVouchAndReputation_Success() public {
-        uint256 initialStake = 100 * 1e18;
-        uint256 slashAmount = 40 * 1e18;
+    function test_SlashVouch_Success() public {
+        uint256 vouchAmount = 100e18;
+        vm.prank(voucher1);
+        mockDai.approve(address(reputation), vouchAmount);
+        vm.prank(voucher1);
+        reputation.addVouch(user1, vouchAmount, address(mockDai)); 
 
-        // user1 (voucher) vouches for user2 (borrower)
-        vm.startPrank(user1);
-        mockDai.approve(address(reputation), initialStake);
-        reputation.addVouch(user2, initialStake, address(mockDai));
+        uint256 slashPrincipal = vouchAmount / 2; 
+
+        Reputation.ReputationProfile memory initialVoucherProfile = reputation.getReputationProfile(voucher1);
+        int256 initialVoucherRep = initialVoucherProfile.currentReputationScore;
+        uint256 initialVoucherTimesDefaulted = initialVoucherProfile.timesDefaultedAsVoucher;
+        uint256 initialLenderDaiBalance = mockDai.balanceOf(user2); 
+
+        int256 voucherRepChange = reputation.REPUTATION_POINTS_VOUCH_DEFAULTED_VOUCHER();
+        int256 expectedVoucherNewScore = initialVoucherRep + voucherRepChange;
+        string memory repUpdateReason = "Vouched loan defaulted, stake slashed";
+
+
+        vm.startPrank(p2pLendingContract); 
+
+        vm.expectEmit(true, true, false, true, address(reputation)); 
+        emit VouchSlashed(voucher1, user1, slashPrincipal, user2);
+
+        vm.expectEmit(true, false, false, true, address(reputation)); 
+        emit ReputationUpdated(voucher1, expectedVoucherNewScore, repUpdateReason);
+
+        reputation.slashVouchAndReputation(voucher1, user1, slashPrincipal, user2);
         vm.stopPrank();
 
-        uint256 lenderDaiBalanceBeforeSlash = mockDai.balanceOf(user3); // user3 is the lender to compensate
-        Reputation.ReputationProfile memory voucherProfileBefore = reputation.getReputationProfile(user1);
+        Reputation.Vouch memory vouch = reputation.getVouchDetails(voucher1, user1);
+        assertEq(vouch.stakedAmount, vouchAmount - slashPrincipal, "Vouch stake amount not reduced correctly");
+        assertTrue(vouch.isActive, "Vouch should remain active if partially slashed"); 
 
-        // Simulate call from P2PLending contract to slash the vouch
-        vm.startPrank(actualP2PLendingAddress);
-        reputation.slashVouchAndReputation(user1 /*voucher*/, user2 /*defaultingBorrower*/, slashAmount, user3 /*lenderToCompensate*/);
-        vm.stopPrank();
+        assertEq(mockDai.balanceOf(address(reputation)), vouchAmount - slashPrincipal, "Reputation contract balance after slash incorrect");
+        assertEq(mockDai.balanceOf(user2), initialLenderDaiBalance + slashPrincipal, "Lender balance after slash incorrect");
 
-        Reputation.Vouch memory vouchAfterSlash = reputation.getVouchDetails(user1, user2);
-        assertTrue(vouchAfterSlash.isActive, "Vouch should still be active after partial slash");
-        assertEq(vouchAfterSlash.stakedAmount, initialStake - slashAmount, "Vouch staked amount incorrect after slash");
-
-        assertEq(mockDai.balanceOf(user3), lenderDaiBalanceBeforeSlash + slashAmount, "Lender DAI balance incorrect after compensation");
-        assertEq(mockDai.balanceOf(address(reputation)), initialStake - slashAmount, "Reputation contract DAI balance incorrect after slash");
-
-        Reputation.ReputationProfile memory voucherProfileAfter = reputation.getReputationProfile(user1);
-        assertEq(voucherProfileAfter.currentReputationScore, voucherProfileBefore.currentReputationScore + reputation.REPUTATION_POINTS_VOUCH_DEFAULTED_VOUCHER(), "Voucher reputation score incorrect after slash");
-        assertEq(voucherProfileAfter.vouchingStakeAmount, initialStake - slashAmount, "Voucher total stake incorrect after slash");
-        assertEq(voucherProfileAfter.timesDefaultedAsVoucher, 1, "Voucher times defaulted as voucher mismatch");
+        Reputation.ReputationProfile memory finalVoucherProfileAfterSlash = reputation.getReputationProfile(voucher1);
+        assertEq(finalVoucherProfileAfterSlash.currentReputationScore, expectedVoucherNewScore, "Voucher reputation score not updated correctly");
+        assertEq(finalVoucherProfileAfterSlash.vouchingStakeAmount, vouchAmount - slashPrincipal, "Voucher stake amount in profile incorrect");
+        assertEq(finalVoucherProfileAfterSlash.timesDefaultedAsVoucher, initialVoucherTimesDefaulted + 1, "Times defaulted as voucher not incremented");
     }
 
-    function test_SlashVouchAndReputation_FullSlashDeactivates() public {
-        uint256 initialStake = 100 * 1e18;
-        // user1 (voucher) vouches for user2 (borrower)
-        vm.startPrank(user1);
-        mockDai.approve(address(reputation), initialStake);
-        reputation.addVouch(user2, initialStake, address(mockDai));
+    function test_SlashVouch_FullAmount_Success() public {
+        uint256 vouchAmount = 100e18;
+        vm.prank(voucher1);
+        mockDai.approve(address(reputation), vouchAmount);
+        vm.prank(voucher1);
+        reputation.addVouch(user1, vouchAmount, address(mockDai));
+
+        uint256 slashPrincipal = vouchAmount; 
+
+        Reputation.ReputationProfile memory initialVoucherProfile = reputation.getReputationProfile(voucher1);
+        int256 initialVoucherRep = initialVoucherProfile.currentReputationScore;
+        uint256 initialVoucherTimesDefaulted = initialVoucherProfile.timesDefaultedAsVoucher;
+        uint256 initialLenderDaiBalance = mockDai.balanceOf(user2);
+
+        int256 voucherRepChange = reputation.REPUTATION_POINTS_VOUCH_DEFAULTED_VOUCHER();
+        int256 expectedVoucherNewScore = initialVoucherRep + voucherRepChange;
+        string memory repUpdateReason = "Vouched loan defaulted, stake slashed";
+
+        vm.startPrank(p2pLendingContract);
+        vm.expectEmit(true, true, false, true, address(reputation));
+        emit VouchSlashed(voucher1, user1, slashPrincipal, user2);
+        vm.expectEmit(true, false, false, true, address(reputation));
+        emit ReputationUpdated(voucher1, expectedVoucherNewScore, repUpdateReason);
+
+        reputation.slashVouchAndReputation(voucher1, user1, slashPrincipal, user2);
         vm.stopPrank();
 
-        vm.startPrank(actualP2PLendingAddress);
-        reputation.slashVouchAndReputation(user1, user2, initialStake, user3);
-        vm.stopPrank();
+        Reputation.Vouch memory vouch = reputation.getVouchDetails(voucher1, user1);
+        assertEq(vouch.stakedAmount, 0, "Vouch stake amount not zeroed after full slash");
+        assertFalse(vouch.isActive, "Vouch should be inactive after full slash");
 
-        Reputation.Vouch memory vouchAfterSlash = reputation.getVouchDetails(user1, user2);
-        assertFalse(vouchAfterSlash.isActive, "Vouch should be inactive after full slash");
-        assertEq(vouchAfterSlash.stakedAmount, 0, "Vouch staked amount should be zero after full slash");
-    }
-
-    function test_GetActiveVouchesForBorrower() public {
-        uint256 stakeAmount1 = 50 * 1e18;
-        uint256 stakeAmount2 = 30 * 1e18;
-
-        // User1 vouches for User3
-        vm.startPrank(user1);
-        mockDai.approve(address(reputation), stakeAmount1);
-        reputation.addVouch(user3, stakeAmount1, address(mockDai));
-        vm.stopPrank();
-
-        // User2 vouches for User3
-        vm.startPrank(user2);
-        mockDai.approve(address(reputation), stakeAmount2);
-        reputation.addVouch(user3, stakeAmount2, address(mockDai));
-        vm.stopPrank();
-
-        Reputation.Vouch[] memory activeVouches = reputation.getActiveVouchesForBorrower(user3);
-        assertEq(activeVouches.length, 2, "Incorrect number of active vouches for user3");
-        assertEq(activeVouches[0].voucher, user1);
-        assertEq(activeVouches[0].stakedAmount, stakeAmount1);
-        assertEq(activeVouches[1].voucher, user2);
-        assertEq(activeVouches[1].stakedAmount, stakeAmount2);
-
-        // User1 removes their vouch
-        vm.startPrank(user1);
-        reputation.removeVouch(user3);
-        vm.stopPrank();
-
-        activeVouches = reputation.getActiveVouchesForBorrower(user3);
-        assertEq(activeVouches.length, 1, "Incorrect number of active vouches after one removal");
-        assertEq(activeVouches[0].voucher, user2);
-
-        // No active vouches for user1
-        activeVouches = reputation.getActiveVouchesForBorrower(user1);
-        assertEq(activeVouches.length, 0, "User1 should have no active vouches received");
+        assertEq(mockDai.balanceOf(address(reputation)), 0, "Reputation contract balance should be zero after full slash");
+        assertEq(mockDai.balanceOf(user2), initialLenderDaiBalance + slashPrincipal, "Lender balance after full slash incorrect");
+        
+        Reputation.ReputationProfile memory finalVoucherProfileFullSlash = reputation.getReputationProfile(voucher1);
+        assertEq(finalVoucherProfileFullSlash.currentReputationScore, expectedVoucherNewScore);
+        assertEq(finalVoucherProfileFullSlash.vouchingStakeAmount, 0); 
+        assertEq(finalVoucherProfileFullSlash.timesDefaultedAsVoucher, initialVoucherTimesDefaulted + 1);
     }
 } 

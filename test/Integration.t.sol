@@ -1,216 +1,209 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.20;
 
 import {Test, console} from "forge-std/Test.sol";
-import {UserRegistry} from "../src/UserRegistry.sol";
-// import {SocialVouching} from "../src/SocialVouching.sol"; // REMOVED
-import {P2PLending} from "../src/P2PLending.sol"; // UPDATED from LoanContract.sol
-// import {Treasury} from "../src/Treasury.sol"; // REMOVED
+import {UserRegistry} from "src/UserRegistry.sol";
+import {P2PLending} from "src/P2PLending.sol";
+import {Reputation} from "src/Reputation.sol";
+import {MockWorldIdRouter} from "./mocks/MockWorldIdRouter.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {Reputation} from "../src/Reputation.sol"; // ADDED
-import {MockWorldIdRouter} from "./mocks/MockWorldIdRouter.sol"; // Import mock router
-
-// Re-declare events from LoanContract for type-safe emit checks
-// Will need to update these for P2PLending events
-// event LoanPaymentMade(bytes32 indexed loanId, uint256 paymentAmount, uint256 totalPaid);
-// event LoanFullyRepaid(bytes32 indexed loanId);
-// event LoanApproved(bytes32 indexed loanId); 
-// event LoanDisbursed(bytes32 indexed loanId); 
-
-// New P2P Events
-event LoanOfferCreated(bytes32 indexed offerId, address indexed lender, uint256 amount, address token, uint256 interestRate, uint256 duration);
-event LoanRequestCreated(bytes32 indexed requestId, address indexed borrower, uint256 amount, address token, uint256 proposedInterestRate, uint256 proposedDuration);
-event LoanAgreementFormed(bytes32 indexed agreementId, address indexed lender, address indexed borrower, uint256 amount, address token);
+import {PackedBytesToField} from "src/PackedBytesToField.sol";
+// IVoucherManagement and VoucherManagement are not used with current Reputation.sol, can be removed if not needed for other tests
+// import {IVoucherManagement} from "src/interfaces/IVoucherManagement.sol";
+// import {VoucherManagement} from "src/VoucherManagement.sol";
 
 contract IntegrationTest is Test {
     UserRegistry userRegistry;
-    // SocialVouching socialVouching; // REMOVED
-    P2PLending p2pLending; // UPDATED from loanContract
-    // Treasury treasury; // REMOVED
-    MockERC20 mockDAI; 
-    MockERC20 mockUSDC; 
-    Reputation reputation; // ADDED
-    MockWorldIdRouter mockWorldIdRouter; // Mock router instance
+    P2PLending p2pLending;
+    Reputation reputation;
+    MockWorldIdRouter mockWorldIdRouter;
+    MockERC20 mockDai;
+    // VoucherManagement voucherManagement; // Not used
 
-    address owner = address(this); 
-    address user1 = vm.addr(1);
-    address user2 = vm.addr(2);
-    address platformWallet = vm.addr(3); // For platform fees (not currently used by LoanContract)
-    address reputationOAppIntegrationMockAddress = vm.addr(12); // For Reputation OApp
+    address deployer;
+    address user1; // Borrower
+    address user2; // Lender
+    address user3; // Another user
 
-    uint256 constant INITIAL_MINT_AMOUNT = 1_000_000 * 1e18; // For DAI (18 decimals)
-    uint256 constant USER1_NULLIFIER = 11111; // Changed to uint256
-    uint256 constant USER2_NULLIFIER = 22222; // Changed to uint256
-    uint256 constant VOUCHER_NULLIFIER = 33333; // Added for voucher
-    address[] emptyVoucherAddresses; // For applyForLoan calls not testing vouching
+    uint256 constant ONE_DAY_SECONDS = 1 days;
 
-    // Dummy proof data for tests
-    uint256 private constant DUMMY_ROOT = 987654321;
-    uint256[8] private DUMMY_PROOF; // Assign in setUp
+    // World ID related variables for testing
+    uint256 DUMMY_ROOT = 12345; // Dummy root as registerUser expects it
+    uint256 user1Nullifier = 111; // Test nullifier for user1
+    uint256 user2Nullifier = 222; // Test nullifier for user2
+    uint256 user3Nullifier = 333; // Test nullifier for user3
+    // uint256 worldIdGroup = 1; // This is set internally in UserRegistry constructor
+    // bytes32 worldIdSignal = keccak256(abi.encodePacked("test_signal")); // Signal is derived from user address in UserRegistry
 
-    // App and action IDs for testing
-    string testAppIdString = "test-app-integration";
-    string testActionIdRegisterUserString = "test-register-integration";
+    uint256[8] internal proof; // Default proof (can remain empty or be a dummy array)
 
     function setUp() public {
-        DUMMY_PROOF = [uint256(1), 2, 3, 4, 5, 6, 7, 8]; // Assign DUMMY_PROOF
+        deployer = vm.addr(1);
+        user1 = vm.addr(2);
+        user2 = vm.addr(3);
+        user3 = vm.addr(4);
 
-        // Deploy contracts
+        vm.startPrank(deployer);
         mockWorldIdRouter = new MockWorldIdRouter();
-        userRegistry = new UserRegistry(address(mockWorldIdRouter), testAppIdString, testActionIdRegisterUserString);
-        reputation = new Reputation(address(userRegistry)); // Deploy Reputation
-        // socialVouching = new SocialVouching(address(userRegistry)); // REMOVED
-        // treasury = new Treasury(owner); // REMOVED
-        p2pLending = new P2PLending( // UPDATED from loanContract
-            address(userRegistry),
-            address(reputation),                 // Pass Reputation address
-            payable(address(0)),                 // Treasury placeholder
-            reputationOAppIntegrationMockAddress // OApp placeholder
-        );
-
+        userRegistry = new UserRegistry(address(mockWorldIdRouter), "test_app_id_integration", "test_action_register_integration");
+        reputation = new Reputation(address(userRegistry));
+        p2pLending = new P2PLending(address(userRegistry), address(reputation), payable(deployer), address(0));
+        
         // Set P2PLending address in Reputation contract
-        vm.startPrank(owner);
         reputation.setP2PLendingContractAddress(address(p2pLending));
-        vm.stopPrank();
 
-        // console.log("IntegrationSetup: address(p2pLending) set in Reputation:", address(p2pLending));
-        // console.log("IntegrationSetup: reputation.p2pLendingContractAddress():", reputation.p2pLendingContractAddress());
-
-        // Deploy mock tokens
-        mockDAI = new MockERC20("MockDAI", "mDAI", 18);
-        mockUSDC = new MockERC20("MockUSDC", "mUSDC", 6); // USDC typically has 6 decimals
-
-        // Set up contract addresses
-        vm.startPrank(owner);
-        // treasury.setLoanContractAddress(address(loanContract)); // REMOVED
-        // socialVouching.setLoanContractAddress(address(loanContract)); // REMOVED
-        // loanContract.setPlatformWallet(platformWallet); // Assuming this exists for fees
-        // loanContract.setPlatformFeePercentage(100); // 1% fee (100 / 10000)
-        vm.stopPrank();
-
-        // Register users (assuming proof verification will pass)
+        // voucherManagement = new VoucherManagement(address(userRegistry)); // Not used
+        // reputation.setVoucherManagementContract(address(voucherManagement)); // Not used
+        
+        mockDai = new MockERC20("MockDAI", "mDAI", 18);
         mockWorldIdRouter.setShouldProofSucceed(true);
-        vm.prank(owner); userRegistry.registerUser(user1, DUMMY_ROOT, USER1_NULLIFIER, DUMMY_PROOF);
-        vm.prank(owner); userRegistry.registerUser(user2, DUMMY_ROOT, USER2_NULLIFIER, DUMMY_PROOF);
+        vm.stopPrank();
 
-        // Mint tokens to users and treasury
-        mockDAI.mint(user1, INITIAL_MINT_AMOUNT);
-        // mockDAI.mint(address(treasury), INITIAL_MINT_AMOUNT * 10); // REMOVED Treasury minting
-        mockDAI.mint(owner, INITIAL_MINT_AMOUNT * 10); // Mint to owner for P2P lending for now
-        mockDAI.mint(user2, INITIAL_MINT_AMOUNT * 2); // Lender (user2) gets more
-        mockUSDC.mint(user1, INITIAL_MINT_AMOUNT); 
-        mockUSDC.mint(user2, INITIAL_MINT_AMOUNT); 
+        // Register users
+        vm.prank(user1);
+        userRegistry.registerUser(user1, DUMMY_ROOT, user1Nullifier, proof);
+        vm.prank(user2);
+        userRegistry.registerUser(user2, DUMMY_ROOT, user2Nullifier, proof);
+        vm.prank(user3);
+        userRegistry.registerUser(user3, DUMMY_ROOT, user3Nullifier, proof);
+        vm.stopPrank(); // Explicitly stop user3 prank before starting deployer prank for minting
+
+        // Mint DAI for users
+        vm.startPrank(deployer); // Start prank for deployer
+        mockDai.mint(user1, 1000e18);
+        mockDai.mint(user2, 1000e18);
+        vm.stopPrank(); // Stop deployer prank
     }
 
-    function test_P2P_FullCycle_Offer_Accept_Repay_NoCollateral_NoVouch() public {
-        // 1. User2 (lender) creates a loan offer
-        uint256 offerAmount = 100 * 1e18; // 100 mDAI
-        uint256 interestRate = 500; // 5%
-        uint256 duration = 30 days;
+    function test_FullLoanCycle_OnTimeRepayment_NoCollateral() public {
+        // 1. Lender (user2) creates a loan offer
+        uint256 offerPrincipal = 100e18;
+        uint16 offerInterestBPS = 500; // 5%
+        uint256 offerDurationSeconds = 30 * ONE_DAY_SECONDS;
+        address loanToken = address(mockDai); // Define loan token
+
         vm.startPrank(user2);
-        mockDAI.approve(address(p2pLending), offerAmount);
-        bytes32 offerId = p2pLending.createLoanOffer(offerAmount, address(mockDAI), interestRate, duration, 0, address(0));
+        mockDai.approve(address(p2pLending), offerPrincipal);
+
+        // Test that createLoanOffer executes successfully
+        bytes32 offerId = p2pLending.createLoanOffer(
+            offerPrincipal,           // amount_
+            loanToken,                // token_
+            offerInterestBPS,         // interestRateBPS_
+            offerDurationSeconds,     // durationSeconds_
+            0,                        // requiredCollateralAmount_
+            address(0)                // collateralToken_
+        );
         vm.stopPrank();
 
-        // 2. User1 (borrower) accepts the loan offer
+        // Verify offerId is not zero
+        assertTrue(offerId != bytes32(0), "offerId should not be zero");
+
+        P2PLending.LoanOffer memory createdOffer = p2pLending.getLoanOfferDetails(offerId);
+        assertEq(createdOffer.lender, user2, "Offer lender mismatch");
+        assertEq(createdOffer.amount, offerPrincipal, "Offer principal mismatch");
+
+        // 2. Borrower (user1) accepts the loan offer
         vm.startPrank(user1);
+        // Borrower doesn't need to approve DAI for collateral as there's none.
+        
         bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, 0, address(0));
         vm.stopPrank();
 
         P2PLending.LoanAgreement memory agreement = p2pLending.getLoanAgreementDetails(agreementId);
-        assertEq(agreement.borrower, user1);
-        assertEq(agreement.lender, user2);
-        assertEq(agreement.principalAmount, offerAmount);
+        assertEq(agreement.borrower, user1, "Agreement borrower mismatch");
+        assertEq(agreement.lender, user2, "Agreement lender mismatch");
+        uint256 totalDue = agreement.principalAmount + (agreement.principalAmount * uint256(agreement.interestRateBPS) / 10000);
 
-        // 3. Fast forward time (e.g., half duration) - optional partial repayment could be tested here
-        vm.warp(block.timestamp + (duration / 2));
+        // 3. Borrower (user1) repays the loan on time
+        vm.warp(agreement.dueDate - 1 * ONE_DAY_SECONDS); // Warp to just before due date
 
-        // 4. User1 (borrower) repays the loan fully
-        uint256 totalDue = (agreement.principalAmount * (p2pLending.BASIS_POINTS() + agreement.interestRate)) / p2pLending.BASIS_POINTS();
         vm.startPrank(user1);
-        mockDAI.approve(address(p2pLending), totalDue);
+        mockDai.approve(address(p2pLending), totalDue);
+        
         p2pLending.repayLoan(agreementId, totalDue);
         vm.stopPrank();
 
-        P2PLending.LoanAgreement memory agreementAfterRepay = p2pLending.getLoanAgreementDetails(agreementId);
-        assertEq(uint(agreementAfterRepay.status), uint(P2PLending.LoanStatus.Repaid));
-
+        assertEq(uint(p2pLending.getLoanAgreementDetails(agreementId).status), uint(P2PLending.LoanStatus.Repaid), "Loan not repaid");
+        
         // Check reputation scores
         Reputation.ReputationProfile memory borrowerProfile = reputation.getReputationProfile(user1);
         Reputation.ReputationProfile memory lenderProfile = reputation.getReputationProfile(user2);
-        assertEq(borrowerProfile.currentReputationScore, reputation.REPUTATION_POINTS_REPAID());
-        assertEq(lenderProfile.currentReputationScore, reputation.REPUTATION_POINTS_LENT_SUCCESSFULLY());
+        
+        // The initial reputation should be 0, and after successful repayment:
+        // - Borrower gets REPUTATION_POINTS_REPAID_ON_TIME_ORIGINAL
+        // - Lender gets REPUTATION_POINTS_LENT_SUCCESSFULLY_ON_TIME_ORIGINAL
+        assertEq(borrowerProfile.currentReputationScore, reputation.REPUTATION_POINTS_REPAID_ON_TIME_ORIGINAL(), "Borrower reputation incorrect after on-time repayment");
+        assertEq(lenderProfile.currentReputationScore, reputation.REPUTATION_POINTS_LENT_SUCCESSFULLY_ON_TIME_ORIGINAL(), "Lender reputation incorrect after on-time repayment");
     }
 
-    function test_P2P_FullCycle_Request_Fund_Default_WithCollateral_WithVouch() public {
-        // 1. User3 (voucher) vouches for User1 (borrower)
-        address voucher = vm.addr(4); 
-        // uint256 voucherNullifier = 33333; // Already defined as VOUCHER_NULLIFIER
-        mockWorldIdRouter.setShouldProofSucceed(true); // Ensure registration works
-        vm.prank(owner); userRegistry.registerUser(voucher, DUMMY_ROOT, VOUCHER_NULLIFIER, DUMMY_PROOF);
-        mockDAI.mint(voucher, 200 * 1e18); 
+    function test_FullLoanCycle_Default_WithCollateral() public {
+        // 1. Lender (user2) creates a loan offer with collateral
+        uint256 offerPrincipal = 50e18; // Loan 50 DAI
+        uint16 offerInterestBPS = 1000; // 10%
+        uint256 offerDurationSeconds = 15 * ONE_DAY_SECONDS;
+        address loanTokenDefault = address(mockDai);
+        address offerCollateralToken = address(mockDai); // Using DAI as collateral for simplicity
+        uint256 offerCollateralAmount = 60e18; // 60 DAI collateral
 
-        uint256 vouchAmount = 50 * 1e18; 
-        vm.startPrank(voucher); 
-        mockDAI.approve(address(reputation), vouchAmount);
-        reputation.addVouch(user1 /*borrowerToVouchFor*/, vouchAmount, address(mockDAI));
+        vm.startPrank(user2);
+        mockDai.approve(address(p2pLending), offerPrincipal); // Approve principal for lending
+
+        bytes32 offerId = p2pLending.createLoanOffer(
+            offerPrincipal, 
+            loanTokenDefault, 
+            offerInterestBPS, 
+            offerDurationSeconds, 
+            offerCollateralAmount, 
+            offerCollateralToken
+        );
         vm.stopPrank();
 
-        // 2. User1 (borrower) creates a loan request with collateral
-        uint256 requestAmount = 200 * 1e18; // 200 mDAI
-        uint256 collateralAmountUSDC = 100 * 1e6; // 100 mUSDC
-        uint256 proposedInterest = 600; // 6%
-        uint256 proposedDuration = 60 days;
+        // 2. Borrower (user1) accepts the loan offer
         vm.startPrank(user1);
-        mockUSDC.approve(address(p2pLending), collateralAmountUSDC);
-        bytes32 requestId = p2pLending.createLoanRequest(requestAmount, address(mockDAI), proposedInterest, proposedDuration, collateralAmountUSDC, address(mockUSDC));
+        mockDai.approve(address(p2pLending), offerCollateralAmount); // Approve DAI for collateral deposit
+        
+        bytes32 agreementId = p2pLending.acceptLoanOffer(offerId, offerCollateralAmount, offerCollateralToken);
         vm.stopPrank();
 
-        // 3. User2 (lender) funds the loan request 
-        vm.startPrank(user2); // user2 as lender
-        mockDAI.approve(address(p2pLending), requestAmount);
-        bytes32 agreementId = p2pLending.fundLoanRequest(requestId);
-        vm.stopPrank();
+        // Check balances after loan acceptance
+        // Borrower: starts 1000, deposits 60 collateral, receives 50 loan = 1000 - 60 + 50 = 990
+        assertEq(mockDai.balanceOf(user1), 1000e18 - offerCollateralAmount + offerPrincipal, "Borrower DAI balance incorrect after loan with collateral");
+        // P2P contract: holds collateral 60
+        assertEq(mockDai.balanceOf(address(p2pLending)), offerCollateralAmount, "P2P contract should hold collateral");
+        // Lender: starts 1000, lends 50 = 950
+        assertEq(mockDai.balanceOf(user2), 1000e18 - offerPrincipal, "Lender DAI balance incorrect after loan with collateral");
 
         P2PLending.LoanAgreement memory agreement = p2pLending.getLoanAgreementDetails(agreementId);
-        assertEq(agreement.collateralAmount, collateralAmountUSDC);
+        
+        // 3. Time passes, loan becomes overdue and defaults
+        vm.warp(agreement.dueDate + 2 * ONE_DAY_SECONDS); // Warp 2 days past due date
 
-        // Capture balances/state before default
-        Reputation.ReputationProfile memory voucherProfileBefore = reputation.getReputationProfile(voucher);
-        uint256 lenderDaiBalanceBeforeDefault = mockDAI.balanceOf(user2);
-        uint256 reputationDaiBalanceBeforeDefault = mockDAI.balanceOf(address(reputation));
-
-        // 4. Fast forward time past due date
-        vm.warp(block.timestamp + proposedDuration + 1 days);
-
-        // 5. Handle P2P Default (called by anyone, e.g. lender user2)
+        // 4. Lender (user2) handles the default
         vm.startPrank(user2);
+        
         p2pLending.handleP2PDefault(agreementId);
         vm.stopPrank();
 
-        P2PLending.LoanAgreement memory agreementAfterDefault = p2pLending.getLoanAgreementDetails(agreementId);
-        assertEq(uint(agreementAfterDefault.status), uint(P2PLending.LoanStatus.Defaulted));
+        agreement = p2pLending.getLoanAgreementDetails(agreementId);
+        assertEq(uint(agreement.status), uint(P2PLending.LoanStatus.Defaulted), "Loan status not Defaulted");
 
-        // Check borrower's reputation
-        Reputation.ReputationProfile memory borrowerProfileAfterDefault = reputation.getReputationProfile(user1);
-        assertEq(borrowerProfileAfterDefault.currentReputationScore, reputation.REPUTATION_POINTS_DEFAULTED());
+        // Check balances after default handling
+        // Borrower: no change from 990, collateral is lost
+        assertEq(mockDai.balanceOf(user1), 1000e18 - offerCollateralAmount + offerPrincipal, "Borrower DAI balance incorrect after default");
+        // P2P Contract: collateral should be gone
+        assertEq(mockDai.balanceOf(address(p2pLending)), 0, "P2P contract DAI balance should be 0 after default");
+        // Lender: starts 950, receives collateral 60 = 1010
+        assertEq(mockDai.balanceOf(user2), 1000e18 - offerPrincipal + offerCollateralAmount, "Lender DAI balance incorrect after default (collateral transfer)");
 
-        // Check voucher's reputation and stake
-        uint256 expectedSlashAmount = (vouchAmount * 1000) / p2pLending.BASIS_POINTS(); // 10% of original vouch
-        Reputation.ReputationProfile memory voucherProfileAfter = reputation.getReputationProfile(voucher);
-        assertEq(voucherProfileAfter.currentReputationScore, voucherProfileBefore.currentReputationScore + reputation.REPUTATION_POINTS_VOUCH_DEFAULTED_VOUCHER(), "Voucher reputation score incorrect");
-        Reputation.Vouch memory vouchAfter = reputation.getVouchDetails(voucher, user1);
-        assertEq(vouchAfter.stakedAmount, vouchAmount - expectedSlashAmount, "Voucher stake incorrect after slash");
-
-        // Check lender (user2) received the slashed vouch amount (DAI)
-        assertEq(mockDAI.balanceOf(user2), lenderDaiBalanceBeforeDefault + expectedSlashAmount, "Lender DAI balance incorrect after slash");
-
-        // Check Reputation contract DAI balance
-        assertEq(mockDAI.balanceOf(address(reputation)), reputationDaiBalanceBeforeDefault - expectedSlashAmount, "Reputation contract DAI balance incorrect after slash");
+        // Check reputation
+        Reputation.ReputationProfile memory borrowerProfile = reputation.getReputationProfile(user1);
+        assertEq(borrowerProfile.currentReputationScore, reputation.REPUTATION_POINTS_DEFAULTED(), "Borrower reputation score for default incorrect");
     }
-
-    // Remove old placeholder tests
-    // function test_FullLoanCycle_WithCollateral_NoVouching() public { ... }
-    // function test_FullLoanCycle_WithSocialVouching() public { ... }
+    
+    // TODO: Add more integration tests:
+    // - Loan request flow
+    // - Partial repayment
+    // - Payment modification requests and responses
+    // - Vouching integration (if VoucherManagement is re-introduced and integrated with P2PLending/Reputation)
 } 
